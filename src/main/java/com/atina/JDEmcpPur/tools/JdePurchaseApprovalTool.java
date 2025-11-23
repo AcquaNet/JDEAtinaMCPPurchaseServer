@@ -1,20 +1,18 @@
 package com.atina.JDEmcpPur.tools;
 
+import com.atina.JDEmcpPur.services.JdePurchaseOrderClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-
-import java.net.Authenticator;
-
 
 @Component
 public class JdePurchaseApprovalTool {
 
     private static final Logger log = LoggerFactory.getLogger(JdePurchaseApprovalTool.class);
+
+    private final JdePurchaseOrderClient jdeClient;
 
     // Si tenés un servicio que llama al microservicio Atina, lo inyectás acá.
     // private final JdePurchaseService jdePurchaseService;
@@ -22,6 +20,11 @@ public class JdePurchaseApprovalTool {
     // public JdePurchaseApprovalTool(JdePurchaseService jdePurchaseService) {
     //     this.jdePurchaseService = jdePurchaseService;
     // }
+
+    public JdePurchaseApprovalTool(JdePurchaseOrderClient jdeClient) {
+        this.jdeClient = jdeClient;
+    }
+
 
     // =========================
     // Tool 1: Listar pendientes
@@ -42,12 +45,9 @@ public class JdePurchaseApprovalTool {
             Integer limit
     ) {
 
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        int finalLimit = (limit != null && limit > 0) ? limit : 10;
+        var objRes =  jdeClient.getPendingPurchaseOrders(finalLimit);
 
-        log.info(authentication.getName());
-        log.info(authentication.isAuthenticated()?"TRUE":"FALSE");
-
-        log.info(authentication.getPrincipal().toString());
 
         // TODO: reemplazar por llamada al microservicio Atina (servicio JDE).
         // var orders = jdePurchaseService.findPendingApprovals(limit);
