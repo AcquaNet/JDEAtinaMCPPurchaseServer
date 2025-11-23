@@ -46,17 +46,8 @@ public class JdePurchaseApprovalTool {
     ) {
 
         int finalLimit = (limit != null && limit > 0) ? limit : 10;
-        var objRes =  jdeClient.getPendingPurchaseOrders(finalLimit);
 
-
-        // TODO: reemplazar por llamada al microservicio Atina (servicio JDE).
-        // var orders = jdePurchaseService.findPendingApprovals(limit);
-
-        var orders = """
-                - **PO 1233** – Provider: Vendor A – Amount: 1,200.00 USD – Status: PENDING
-                - **PO 1234** – Provider: Vendor B – Amount: 3,450.00 USD – Status: PENDING
-                - **PO 1235** – Provider: Vendor C – Amount:   980.00 USD – Status: PENDING
-                """;
+        var orders = jdeClient.getPendingPurchaseOrders(limit);
 
         return """
                Pending purchase orders (showing up to %d):

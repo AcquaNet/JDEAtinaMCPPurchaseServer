@@ -28,7 +28,7 @@ public class JdePurchaseOrderClient {
 
         ResponseEntity<String> response = webClient.get()
                 .uri(baseUrl + "/v1/getPurchaseOrdersForApprover?limit={limit}", limit)
-                .header("Authorization", "Bearer " + token)
+                .header("X-Approver-Token", token)
                 .retrieve()
                 .toEntity(String.class)
                 .block();

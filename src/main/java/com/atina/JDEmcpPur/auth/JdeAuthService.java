@@ -58,7 +58,7 @@ public class JdeAuthService {
      * Actualiza el token cuando el microservicio devuelve uno nuevo (por ejemplo en un header JDEToken).
      */
     public void updateTokenFromResponse(org.springframework.http.HttpHeaders headers) {
-        String newToken = headers.getFirst("JDEToken"); // o el nombre real del header
+        String newToken = headers.getFirst("X-Approver-Token"); // o el nombre real del header
         if (newToken != null && !newToken.isBlank()) {
             tokenStore.setToken(newToken);
         }
