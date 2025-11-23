@@ -5,6 +5,10 @@ import org.slf4j.LoggerFactory;
 import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+
+import java.net.Authenticator;
 
 
 @Component
@@ -37,6 +41,13 @@ public class JdePurchaseApprovalTool {
             )
             Integer limit
     ) {
+
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+
+        log.info(authentication.getName());
+        log.info(authentication.isAuthenticated()?"TRUE":"FALSE");
+
+        log.info(authentication.getPrincipal().toString());
 
         // TODO: reemplazar por llamada al microservicio Atina (servicio JDE).
         // var orders = jdePurchaseService.findPendingApprovals(limit);
