@@ -55,4 +55,35 @@ public class JdePurchaseOrderClient {
         return response.getBody();
     }
 
+    public String getPurchaseOrderDetail(String documentOrderTypeCode,
+                                         Integer documentOrderInvoiceNumber,
+                                         String documentCompanyKeyOrderNo,
+                                         String documentSuffix) {
+
+
+        String token = authService.getOrCreateToken();
+
+        ResponseEntity<String> response = webClient.get()
+                .uri(
+                        baseUrl
+                                + "/v1/getPurchaseOrderDetailForApprover"
+                                + "?documentCompanyKeyOrderNo={company}"
+                                + "&documentOrderTypeCode={type}"
+                                + "&documentOrderInvoiceNumber={number}"
+                                + "&documentSuffix={suffix}",
+                        documentCompanyKeyOrderNo,
+                        documentOrderTypeCode,
+                        documentOrderInvoiceNumber,
+                        documentSuffix
+                )
+                .header("X-Approver-Token", token)
+                .retrieve()
+                .toEntity(String.class)
+                .block();
+
+        authService.updateTokenFromResponse(response.getHeaders());
+
+        return response.getBody();
+ 
+    }
 }
