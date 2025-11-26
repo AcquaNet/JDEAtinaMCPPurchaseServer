@@ -1,11 +1,16 @@
 package com.atina.JDEmcpPur.tools;
 
 import com.atina.JDEmcpPur.services.JdePurchaseOrderClient;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
+
+import java.util.HashMap;
+import java.util.Map;
 
 @Component
 public class JdePurchaseApprovalTool {
@@ -13,9 +18,12 @@ public class JdePurchaseApprovalTool {
     private static final Logger log = LoggerFactory.getLogger(JdePurchaseApprovalTool.class);
 
     private final JdePurchaseOrderClient jdeClient;
+    private final ObjectMapper objectMapper;
 
-    public JdePurchaseApprovalTool(JdePurchaseOrderClient jdeClient) {
+
+    public JdePurchaseApprovalTool(JdePurchaseOrderClient jdeClient, ObjectMapper objectMapper) {
         this.jdeClient = jdeClient;
+        this.objectMapper = objectMapper;
     }
 
     // =========================
@@ -157,63 +165,160 @@ public class JdePurchaseApprovalTool {
     }
 
     // =========================
-    // Tool 3: Aprobar una OC
+    // Tool: Aprobar OC
     // =========================
     @McpTool(
             name = "jde_approve_purchase_order",
             description = """
-           Approve a JDE purchase order that is currently pending approval.
-           Use this tool only after showing the user the pending orders and confirming
-           which purchase order number they want to approve.
-           """
+            Approve a specific JDE purchase order.
+
+            Use this tool only after:
+            - Listing the pending purchase orders, and
+            - (optionally) showing the purchase order detail to the user.
+
+            IMPORTANT FOR THE ASSISTANT:
+            - You MUST provide all four JDE identifiers exactly as returned by the pending-orders or detail tool:
+              * documentOrderTypeCode
+              * documentOrderInvoiceNumber
+              * documentCompanyKeyOrderNo
+              * documentSuffix
+            - Do NOT guess or invent values.
+            - Ask the user for a short remark explaining the approval reason if appropriate.
+            - The remark will be truncated to 30 characters as required by the backend API.
+            """
     )
     public String approvePurchaseOrder(
-            @McpToolParam(
-                    description = "Purchase order number to approve, for example '1233'."
-            )
-            String poNumber,
-            @McpToolParam(
-                    description = "Optional approval comment to be sent to JDE (may be null or empty)."
-            )
-            String approvalComment
+            @McpToolParam(description = "JDE documentOrderTypeCode, e.g. 'OP'.")
+            String documentOrderTypeCode,
+            @McpToolParam(description = "JDE documentOrderInvoiceNumber, e.g. 5067.")
+            Integer documentOrderInvoiceNumber,
+            @McpToolParam(description = "JDE documentCompanyKeyOrderNo, e.g. '00001'.")
+            String documentCompanyKeyOrderNo,
+            @McpToolParam(description = "JDE documentSuffix, e.g. '000'.")
+            String documentSuffix,
+            @McpToolParam(description = "Short approval remark (will be truncated to 30 characters).")
+            String remark
     ) {
-
-        log.info("Request to approve PO {} with comment: {}", poNumber, approvalComment);
-
-        try {
-            // TODO: llamada real al microservicio Atina/JDE
-            // boolean approved = jdePurchaseService.approvePurchaseOrder(poNumber, approvalComment);
-
-            boolean approved = true; // stub de ejemplo
-
-            if (approved) {
-                return """
-                       Purchase order **%s** was successfully approved.
-                       Comment: %s
-                       """.formatted(
-                        poNumber,
-                        (approvalComment == null || approvalComment.isBlank())
-                                ? "(no comment provided)"
-                                : approvalComment
-                );
-            } else {
-                return """
-                       Purchase order **%s** could not be approved.
-                       Please check its status in JDE or try again later.
-                       """.formatted(poNumber);
-            }
-
-        } catch (Exception e) {
-            log.error("Error approving purchase order {} in JDE", poNumber, e);
-            return """
-                   An error occurred while trying to approve purchase order **%s**.
-                   Technical details have been logged in the MCP server. 
-                   Ask the user to try again later or contact support.
-                   """.formatted(poNumber);
-        }
+        return processPurchaseOrderInternal(
+                "A",
+                documentOrderTypeCode,
+                documentOrderInvoiceNumber,
+                documentCompanyKeyOrderNo,
+                documentSuffix,
+                remark
+        );
     }
 
-    // En el futuro podés agregar más tools:
-    // - Rechazar OC
-    // - Ver detalle de una OC específica, etc.
+    // =========================
+    // Tool: Rechazar OC
+    // =========================
+    @McpTool(
+            name = "jde_reject_purchase_order",
+            description = """
+            Reject a specific JDE purchase order.
+
+            Use this tool only after:
+            - Listing the pending purchase orders, and
+            - (optionally) showing the purchase order detail to the user.
+
+            IMPORTANT FOR THE ASSISTANT:
+            - You MUST provide all four JDE identifiers exactly as returned by the pending-orders or detail tool:
+              * documentOrderTypeCode
+              * documentOrderInvoiceNumber
+              * documentCompanyKeyOrderNo
+              * documentSuffix
+            - Do NOT guess or invent values.
+            - Always ask the user for a concise remark explaining the rejection reason.
+            - The remark will be truncated to 30 characters as required by the backend API.
+            """
+    )
+    public String rejectPurchaseOrder(
+            @McpToolParam(description = "JDE documentOrderTypeCode, e.g. 'OP'.")
+            String documentOrderTypeCode,
+            @McpToolParam(description = "JDE documentOrderInvoiceNumber, e.g. 5067.")
+            Integer documentOrderInvoiceNumber,
+            @McpToolParam(description = "JDE documentCompanyKeyOrderNo, e.g. '00001'.")
+            String documentCompanyKeyOrderNo,
+            @McpToolParam(description = "JDE documentSuffix, e.g. '000'.")
+            String documentSuffix,
+            @McpToolParam(description = "Short rejection remark (will be truncated to 30 characters).")
+            String remark
+    ) {
+        return processPurchaseOrderInternal(
+                "R",
+                documentOrderTypeCode,
+                documentOrderInvoiceNumber,
+                documentCompanyKeyOrderNo,
+                documentSuffix,
+                remark
+        );
+    }
+
+    // =========================
+    // Método interno común
+    // =========================
+    private String processPurchaseOrderInternal(
+            String action, // "A" o "R"
+            String documentOrderTypeCode,
+            Integer documentOrderInvoiceNumber,
+            String documentCompanyKeyOrderNo,
+            String documentSuffix,
+            String remark
+    ) {
+
+        String safeRemark = (remark != null) ? remark.trim() : "";
+        if (safeRemark.length() > 30) {
+            safeRemark = safeRemark.substring(0, 30);
+        }
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("documentCompanyKeyOrderNo", documentCompanyKeyOrderNo);
+        payload.put("documentOrderTypeCode", documentOrderTypeCode);
+        payload.put("documentOrderInvoiceNumber", documentOrderInvoiceNumber);
+        payload.put("documentSuffix", documentSuffix);
+        payload.put("action", action);
+        payload.put("remark", safeRemark);
+
+        String jsonBody;
+        try {
+            jsonBody = objectMapper.writeValueAsString(payload);
+        } catch (JsonProcessingException e) {
+            log.error("Error serializing purchase order payload", e);
+            return """
+                   Failed to serialize the purchase order request payload.
+                   Please try again or contact support.
+                   """;
+        }
+
+        try {
+            String response = jdeClient.processPurchaseOrder(jsonBody);
+            return """
+                   Purchase order %s %d / %s-%s has been processed with action '%s'.
+                   Backend response:
+                   %s
+                   """.formatted(
+                    documentOrderTypeCode,
+                    documentOrderInvoiceNumber,
+                    documentCompanyKeyOrderNo,
+                    documentSuffix,
+                    action,
+                    response
+            );
+        } catch (Exception e) {
+            log.error("Error processing purchase order action={} type={} number={} company={} suffix={}",
+                    action, documentOrderTypeCode, documentOrderInvoiceNumber,
+                    documentCompanyKeyOrderNo, documentSuffix, e);
+
+            return """
+                   An error occurred while trying to process the purchase order %s %d / %s-%s \
+                   with action '%s'. Technical details have been logged in the MCP server.
+                   """.formatted(
+                    documentOrderTypeCode,
+                    documentOrderInvoiceNumber,
+                    documentCompanyKeyOrderNo,
+                    documentSuffix,
+                    action
+            );
+        }
+    }
 }

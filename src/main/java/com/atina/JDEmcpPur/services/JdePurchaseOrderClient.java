@@ -2,6 +2,7 @@ package com.atina.JDEmcpPur.services;
 
 import com.atina.JDEmcpPur.auth.JdeAuthService;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -44,7 +45,8 @@ public class JdePurchaseOrderClient {
 
         ResponseEntity<String> response = webClient.post()
                 .uri(baseUrl + "/v1/processPurchaseOrderApproveReject")
-                .header("Authorization", "Bearer " + token)
+                .header("X-Approver-Token",  token)
+                .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(requestJson)
                 .retrieve()
                 .toEntity(String.class)
@@ -76,7 +78,7 @@ public class JdePurchaseOrderClient {
                         documentOrderInvoiceNumber,
                         documentSuffix
                 )
-                .header("X-Approver-Token", token)
+                .header("X-Approver-Token",  token)
                 .retrieve()
                 .toEntity(String.class)
                 .block();
@@ -84,6 +86,6 @@ public class JdePurchaseOrderClient {
         authService.updateTokenFromResponse(response.getHeaders());
 
         return response.getBody();
- 
+
     }
 }
