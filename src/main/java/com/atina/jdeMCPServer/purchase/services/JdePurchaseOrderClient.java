@@ -1,7 +1,6 @@
-package com.atina.JDEmcpPur.services;
+package com.atina.jdeMCPServer.purchase.services;
 
-import com.atina.JDEmcpPur.auth.JdeAuthService;
-import com.atina.JDEmcpPur.tools.JdePurchaseApprovalTool;
+import com.atina.jdeMCPServer.auth.JdeAuthService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;

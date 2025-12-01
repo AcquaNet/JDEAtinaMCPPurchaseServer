@@ -1,4 +1,4 @@
-package com.atina.JDEmcpPur.prompts;
+package com.atina.jdeMCPServer.purchase.prompts;
 
 import io.modelcontextprotocol.spec.McpSchema;
 import org.springaicommunity.mcp.annotation.McpArg;

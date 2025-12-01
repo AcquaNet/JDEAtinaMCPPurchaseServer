@@ -1,6 +1,6 @@
-package com.atina.JDEmcpPur.tools;
+package com.atina.jdeMCPServer.purchase.tools;
 
-import com.atina.JDEmcpPur.services.JdePurchaseOrderClient;
+import com.atina.jdeMCPServer.purchase.services.JdePurchaseOrderClient;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;

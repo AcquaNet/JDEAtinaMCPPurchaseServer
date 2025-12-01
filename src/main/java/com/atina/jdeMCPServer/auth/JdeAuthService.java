@@ -1,4 +1,4 @@
-package com.atina.JDEmcpPur.auth;
+package com.atina.jdeMCPServer.auth;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Service;

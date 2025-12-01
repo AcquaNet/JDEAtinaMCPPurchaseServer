@@ -1,4 +1,4 @@
-package com.atina.JDEmcpPur.auth;
+package com.atina.jdeMCPServer.auth;
 
 import org.springframework.stereotype.Component;
 
