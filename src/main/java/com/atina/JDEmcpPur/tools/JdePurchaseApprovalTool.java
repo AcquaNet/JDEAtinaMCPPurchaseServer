@@ -48,7 +48,7 @@ public class JdePurchaseApprovalTool {
           * documentCompanyKeyOrderNo
           * documentSuffix
         - After calling this tool, summarize the result as a short, human-readable list
-          (e.g., one line per purchase order with key, supplier, amount, and date).
+          (e.g., one line per purchase order with following values: documentCompanyKeyOrderNo,documentOrderTypeCode,documentOrderInvoiceNumber,entityNameSupplier,entityNameShipTo,calculateValues.amountToApprove,calculateValues.currencyToApprove, calculateValues.daysOld,dateRequested and dateTransaction ).
         - If no purchase orders are returned, clearly explain to the user that there are no pending approvals.""")
     public String getPendingPurchaseOrders(
             @McpToolParam(
