@@ -42,14 +42,26 @@ public class JdePurchaseApprovalTool {
         IMPORTANT FOR THE ASSISTANT:
         - Always call this tool BEFORE asking the user to approve or reject a specific purchase order.
         - Do NOT invent or assume purchase order numbers or details. Use exactly the values returned by this tool.
-        - Each purchase order in JDE is uniquely identified by the combination of:
-          * documentOrderTypeCode
-          * documentOrderInvoiceNumber
-          * documentCompanyKeyOrderNo
-          * documentSuffix
-        - After calling this tool, summarize the result as a short, human-readable list
-          (e.g., one line per purchase order with following values: documentCompanyKeyOrderNo,documentOrderTypeCode,documentOrderInvoiceNumber,entityNameSupplier,entityNameShipTo,calculateValues.amountToApprove,calculateValues.currencyToApprove, calculateValues.daysOld,dateRequested and dateTransaction ).
-        - If no purchase orders are returned, clearly explain to the user that there are no pending approvals.""")
+        - Present the list of purchase orders in a **Markdown table**, one row per purchase order.
+        - Use columns (only if available):
+         • PO ID → documentOrderTypeCode + "-" + documentOrderInvoiceNumber
+         • Company → documentCompanyKeyOrderNo
+         • Supplier → entityNameSupplier
+         • Ship To → entityNameShipTo
+         • Amount → calculateValues.amountToApprove
+         • Currency → calculateValues.currencyToApprove
+         • Days Old → calculateValues.daysOld
+         • Requested → dateRequested
+         • Transaction Date → dateTransaction
+         • Remarks → optional short note: "Very old", "High amount", "Old & high amount"
+        - Sort by **Days Old** (descending). If not available, sort by Request Date (oldest first).
+        
+        AFTER THE TABLE:
+        - Provide a short 2–4 sentence summary highlighting:
+            • oldest purchase orders
+            • highest amounts
+            • any clear priority items for review 
+        """)
     public String getPendingPurchaseOrders(
             @McpToolParam(
                     description = """
@@ -78,23 +90,69 @@ public class JdePurchaseApprovalTool {
             description = """
             Retrieve detailed information for a specific JDE purchase order that is pending approval.
 
-            Use this tool when:
+            BEHAVIOR REQUIREMENTS:
+            - The caller must provide the four required JDE identifiers:
+               * documentOrderTypeCode
+               * documentOrderInvoiceNumber
+               * documentCompanyKeyOrderNo
+               * documentSuffix
             - The user has already seen the list of pending purchase orders.
+            - Never guess or invent values. If any identifier is missing or unclear, ask the user to provide or confirm it.
+            - When all identifiers are known, call the underlying JDE service to retrieve the purchase order detail.
             - The user wants to inspect one specific purchase order in more detail
               before deciding whether to approve or reject it.
 
-            IMPORTANT FOR THE ASSISTANT:
-            - You MUST provide all four JDE identifiers exactly as returned by the
-              pending-orders tool:
-              * documentOrderTypeCode
-              * documentOrderInvoiceNumber
-              * documentCompanyKeyOrderNo
-              * documentSuffix
-            - Do NOT guess or fabricate values. Always use values that came from a
-              previous tool call or from the user.
-            - After calling this tool, summarize the result for the user in a
-              clear, human-friendly way (for example: supplier, lines, amounts,
-              currency, requested date, etc.)."""
+            RESPONSE FORMAT (VERY IMPORTANT):
+            After receiving the result, you MUST always format the response using TWO Markdown tables:
+            1) TABLE 1 — PURCHASE ORDER HEADER
+                   - Present the main header fields as a 2-column key/value table.
+                   - Include, if available:
+                     • PO Type
+                     • PO Number
+                     • Company
+                     • Suffix
+                     • Supplier Name
+                     • Ship-To Name
+                     • Requested Date
+                     • Transaction Date
+                     • Total Amount
+                     • Currency
+                     • Days Old
+
+                   Example structure (for illustration only):
+                   | Field        | Value        |
+                   |-------------|-------------|
+                   | PO Type      | OP          |
+                   | PO Number    | 5067        |
+                   | Company      | 00001       |
+                   | Supplier     | ACME        |
+                   | Total Amount | 12,500 USD  |
+                   | Days Old     | 45          |
+            2) TABLE 2 — LINE ITEM DETAILS
+                   - Present the line items in a Markdown table with one row per line.
+                   - Typical columns (use the ones available from the service response):
+                     • Line
+                     • Item Number
+                     • Description
+                     • Quantity
+                     • Unit Price
+                     • Extended Amount
+                     • Currency
+                     • Any other relevant field (Tax, UOM, etc.)
+
+                   Example structure (for illustration only):
+                   | Line | Item   | Description | Qty | Unit Price | Amount | Currency |
+                   |------|--------|-------------|-----|------------|--------|----------|
+                   | 1    | 355710 | CARBURETOR  | 2   | 5000       | 10000  | USD      |
+                   | 2    | 355711 | FILTER      | 5   | 500        | 2500   | USD      |     
+            
+            AFTER THE TABLES:              
+            - Add a short explanatory summary (2–4 sentences) highlighting important aspects:
+              large amounts, very old orders, unusual line items, potential risks, etc.
+            - End with a clear closing question, for example:
+            Would you like to approve or reject this purchase order? or
+            Would you like to review another purchase order in detail? 
+                    """
     )
     public String getPurchaseOrderDetail(
             @McpToolParam(

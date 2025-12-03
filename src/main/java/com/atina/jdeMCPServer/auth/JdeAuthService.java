@@ -1,12 +1,16 @@
 package com.atina.jdeMCPServer.auth;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 @Service
 public class JdeAuthService {
+
+    private static final Logger log = LoggerFactory.getLogger(JdeAuthService.class);
 
     private final JdeTokenStore tokenStore;
 
@@ -36,7 +40,10 @@ public class JdeAuthService {
         }
 
         HttpServletRequest request = attrs.getRequest();
+
         String authHeader = request.getHeader("Authorization");
+
+        log.info("Authorization [{}]",authHeader);
 
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             throw new IllegalStateException(
@@ -49,6 +56,8 @@ public class JdeAuthService {
         if (token.isEmpty()) {
             throw new IllegalStateException("Authorization header Bearer token is empty.");
         }
+
+        log.info("Token [{}]",token);
 
         tokenStore.setToken(token);
         return token;
