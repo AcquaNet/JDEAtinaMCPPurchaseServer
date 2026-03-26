@@ -1,6 +1,7 @@
 package com.atina.jdeMCPServer.purchase.services;
 
 import com.atina.jdeMCPServer.auth.JdeAuthService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,7 +19,6 @@ import java.time.Instant;
 public class JdePurchaseOrderClient {
 
     private static final Logger log = LoggerFactory.getLogger(JdePurchaseOrderClient.class);
-
     private final WebClient webClient;
     private final JdeAuthService authService;
     private final String baseUrl;
@@ -28,7 +28,7 @@ public class JdePurchaseOrderClient {
             @Value("${jde.api.base-url}") String baseUrl) {
 
         this.webClient = WebClient.builder().clientConnector(new ReactorClientHttpConnector(
-                HttpClient.create().responseTimeout(Duration.ofMinutes(8))
+                HttpClient.create().responseTimeout(Duration.ofMinutes(10))
         )).build();
         this.authService = authService;
         this.baseUrl = baseUrl;
