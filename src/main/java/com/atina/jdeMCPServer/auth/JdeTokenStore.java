@@ -75,15 +75,18 @@ public class JdeTokenStore {
     // ---------------------------------------------------------------
     // Parseo del claim "exp" del JWT (sin verificar firma)
     // ---------------------------------------------------------------
+    // Tokens sin claim "exp" se consideran sin vencimiento
+    private static final Instant NO_EXPIRY = Instant.ofEpochSecond(4102444800L); // 2100-01-01
+
     private Instant parseExpiry(String jwt) {
         try {
             String[] parts = jwt.split("\\.");
-            if (parts.length < 2) return Instant.now().plusSeconds(3600); // fallback 1h
+            if (parts.length < 2) return NO_EXPIRY;
 
             String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
             // Extraer "exp": 1234567890 del JSON sin dependencias externas
             int idx = payload.indexOf("\"exp\"");
-            if (idx == -1) return Instant.now().plusSeconds(3600);
+            if (idx == -1) return NO_EXPIRY;
 
             int start = payload.indexOf(':', idx) + 1;
             int end   = payload.indexOf(',', start);
@@ -93,7 +96,7 @@ public class JdeTokenStore {
             return Instant.ofEpochSecond(exp);
 
         } catch (Exception e) {
-            return Instant.now().plusSeconds(3600); // fallback 1h si no se puede parsear
+            return NO_EXPIRY;
         }
     }
 }

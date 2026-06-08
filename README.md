@@ -1,6 +1,6 @@
 # JDE MCP Server
 
-A Model Context Protocol (MCP) server that exposes JD Edwards (JDE) purchase order approval workflows to AI assistants like Claude. It acts as a bridge between Claude and the JDE backend through a Mulesoft API layer.
+A Model Context Protocol (MCP) server that exposes JD Edwards (JDE) purchase order approval and sales order workflows to AI assistants like Claude. It acts as a bridge between Claude and the JDE backend through a Mulesoft API layer.
 
 ---
 
@@ -10,8 +10,13 @@ A Model Context Protocol (MCP) server that exposes JD Edwards (JDE) purchase ord
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Configuration](#configuration)
+  - [Adding the MCP Server to Claude.ai](#adding-the-mcp-server-to-claudeai)
+  - [Adding the MCP Server to Claude Desktop](#adding-the-mcp-server-to-claude-desktop)
+- [Testing with MCP Inspector](#testing-with-mcp-inspector)
 - [Authentication](#authentication)
 - [Available Tools](#available-tools)
+  - [Purchase Order Tools](#purchase-order-tools)
+  - [Sales Order Tools](#sales-order-tools)
 - [Usage Examples](#usage-examples)
 - [Error Handling](#error-handling)
 
@@ -19,27 +24,31 @@ A Model Context Protocol (MCP) server that exposes JD Edwards (JDE) purchase ord
 
 ## Overview
 
-The JDE MCP Server allows Claude (or any MCP-compatible AI assistant) to interact with JD Edwards EnterpriseOne purchase order data in natural language. Users can list pending POs, review their details, and approve or reject them — all from a conversational interface.
+The JDE MCP Server allows Claude (or any MCP-compatible AI assistant) to interact with JD Edwards EnterpriseOne data in natural language. Currently supported modules:
+
+- **Purchase Orders** — List pending POs, review details, approve or reject them.
+- **Sales Orders** — Query customer credit and financial exposure information.
 
 ---
 
 ## Architecture
 
 ```
-User (Claude.ai)
+User (Claude.ai / Claude Desktop)
       │
       ▼
 Claude AI (MCP Client)
-      │  MCP over HTTP (SSE)
+      │  MCP over Streamable HTTP
       ▼
-JDE MCP Server
-https://<your-host>/mcp/message
+JDE MCP Server (this application, port 8080)
       │  REST API calls
-      ▼
-Mulesoft API Layer
-      │
-      ▼
-JD Edwards EnterpriseOne
+      ├──────────────────────────────┐
+      ▼                              ▼
+Mulesoft Purchase API           Mulesoft Sales Order API
+(port 8081)                     (port 8083)
+      │                              │
+      ▼                              ▼
+JD Edwards EnterpriseOne        JD Edwards EnterpriseOne
 ```
 
 ---
@@ -74,9 +83,100 @@ JD Edwards EnterpriseOne
 > **Local development with ngrok:**  
 > If running the server locally, expose it with:
 > ```bash
-> ngrok http 3000
+> ngrok http 8080
 > ```
 > Then use the generated `https://<random>.ngrok-free.app/mcp/message` as the URL.
+
+### Adding the MCP Server to Claude Desktop
+
+1. Open **Claude Desktop** and go to **Settings → Developer → Edit Config**.
+2. This opens the file `claude_desktop_config.json`. Add the MCP server under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "jde-atina": {
+      "url": "http://localhost:8080/mcp"
+    }
+  }
+}
+```
+
+> If the server is remote or exposed via ngrok, replace the URL accordingly:
+> ```json
+> {
+>   "mcpServers": {
+>     "jde-atina": {
+>       "url": "https://<your-host>/mcp"
+>     }
+>   }
+> }
+> ```
+
+3. Save the file and restart Claude Desktop.
+4. You should see the MCP tools (hammer icon) available in the chat input.
+
+#### Pre-authenticated token (skip login)
+
+To avoid calling `jde_login` on every conversation, you can pass a JDE token directly in the Claude Desktop config using the `headers` field. The server will pick it up automatically:
+
+```json
+{
+  "mcpServers": {
+    "jde-atina": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-jde-token>"
+      }
+    }
+  }
+}
+```
+
+With this configuration, all MCP tools work immediately without calling `jde_login` first. The server reads the `Authorization` header, stores the token for the session, and reuses it for all subsequent calls.
+
+> ⚠️ If the token eventually expires, you will need to update it manually in the config and restart Claude Desktop.
+
+---
+
+## Testing with MCP Inspector
+
+The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is a developer tool for testing and debugging MCP servers interactively.
+
+### 1. Start the MCP server
+
+```bash
+./mvnw spring-boot:run
+```
+
+### 2. Launch the Inspector
+
+In a separate terminal:
+
+```bash
+npx @modelcontextprotocol/inspector
+```
+
+This opens a web UI at `http://localhost:6274`.
+
+### 3. Connect to the server
+
+In the Inspector UI:
+
+| Field | Value |
+|---|---|
+| Transport Type | **Streamable HTTP** |
+| URL | `http://localhost:8080/mcp` |
+
+Click **Connect**.
+
+### 4. Test the tools
+
+1. Go to the **Tools** tab — you should see all registered tools (`jde_login`, `jde_list_pending_purchase_orders`, `jde_get_customer_credit_info`, etc.).
+2. Call `jde_login` with valid JDE credentials.
+3. Call any other tool (e.g., `jde_get_customer_credit_info` with `customerNumber: 4242`).
+
+> **Tip:** The Inspector does not send the `Mcp-Session-Id` header. The server falls back to using your IP address as session identifier, so all calls from the Inspector share the same session.
 
 ---
 
@@ -100,6 +200,8 @@ JD Edwards EnterpriseOne
 ---
 
 ## Available Tools
+
+### Purchase Order Tools
 
 ### 1. `jde_login`
 
@@ -239,6 +341,51 @@ Rejects a specific pending purchase order.
 
 ---
 
+### Sales Order Tools
+
+### 6. `jde_get_customer_credit_info`
+
+Retrieves the credit limit and financial exposure for a JDE customer.
+
+```json
+{
+  "tool": "jde_get_customer_credit_info",
+  "parameters": {
+    "customerNumber": 4242
+  }
+}
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `customerNumber` | integer | ✅ | JDE customer number (address book number) |
+
+**Returns:** Customer credit and financial information:
+
+| Field | Description |
+|---|---|
+| `customerNumber` | Customer address book number |
+| `company` | JDE company code (e.g., `00000`) |
+| `currencyCode` | Currency (e.g., `USD`) |
+| `creditLimitAmount` | Approved credit limit |
+| `totalExposureAmount` | Current total exposure (open orders + AR balance) |
+
+**Example response:**
+
+```json
+{
+  "customerNumber": 4242,
+  "company": "00000",
+  "currencyCode": "USD",
+  "creditLimitAmount": 50000,
+  "totalExposureAmount": 2454092.68
+}
+```
+
+> The assistant will calculate **Available Credit** (Credit Limit − Total Exposure) and highlight when the customer exceeds their credit limit.
+
+---
+
 ## Usage Examples
 
 ### Typical Approval Workflow
@@ -269,6 +416,15 @@ Claude:  [calls jde_get_purchase_order_detail]
 User:    Approve it.
 Claude:  [asks for remark, then calls jde_approve_purchase_order]
          → PO approved successfully.
+```
+
+### Example: Customer Credit Check
+
+```
+User:    What's the credit status for customer 4242?
+Claude:  [calls jde_login if needed, then jde_get_customer_credit_info]
+         → Returns credit limit $50,000 USD, total exposure $2,454,092.68.
+         → Highlights: customer is significantly over their credit limit.
 ```
 
 ---
