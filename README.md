@@ -1,7 +1,7 @@
 # JDE MCP Server
 
 A Model Context Protocol (MCP) server that exposes JD Edwards (JDE) purchase order approval and sales order workflows to AI assistants like Claude. It acts as a bridge between Claude and the JDE backend through a Mulesoft API layer.
-
+A
 ---
 
 ## Table of Contents
