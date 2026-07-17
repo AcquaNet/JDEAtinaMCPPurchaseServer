@@ -20,6 +20,7 @@ A
   - [Sales Order Tools](#sales-order-tools)
 - [Usage Examples](#usage-examples)
 - [Error Handling](#error-handling)
+- [Production Checklist](#production-checklist)
 
 ---
 
@@ -571,6 +572,33 @@ Claude:  [calls jde_login if needed, then jde_get_customer_credit_info]
 - Use HTTPS for the MCP server URL at all times.
 - For production, replace ngrok with a stable, authenticated endpoint.
 - Remark fields are capped at **30 characters** by the JDE backend.
+
+---
+
+## Production Checklist
+
+Everything below runs in **dev mode** today. Before moving to the Azure VM:
+
+### Keycloak
+
+- [ ] Replace `start-dev` with `start` in the compose, setting `KC_HOSTNAME` to the real domain/IP (+ `KC_PROXY=edge` if behind a reverse proxy).
+- [ ] **Disable Direct Access Grants** on the `atina-mcp-server` client — the `password` grant is removed in OAuth 2.1 and is only used here for dev `curl` testing. The real user flow (Authorization Code + PKCE S256, already enforced) is unaffected.
+- [ ] Review redirect URIs: `http://localhost:*` (loopback, fine for `mcp-remote`) — add exact HTTPS URIs if any non-loopback client appears.
+- [ ] Change the admin password (`changeme_admin_password`) and the DB password in `.env`.
+
+### OpenBao
+
+- [ ] Switch from `server -dev` (in-memory, always unsealed) to server mode with persistent storage (file/raft) — in dev mode **all secrets are lost on every container restart**.
+- [ ] Replace the root token in `BAO_TOKEN` with a **scoped token**: policy with read-only access to `secret/data/jde/*` only.
+- [ ] Re-seed the JDE credentials after the storage migration (`scripts/seed-identity-dev.sh` or your provisioning process).
+
+### MCP Server
+
+- [ ] Serve `/mcp` over **HTTPS** (stable endpoint instead of ngrok).
+- [ ] Provide `BAO_ADDR`, `BAO_TOKEN` and `ATINA_JWT_SECRET` via a real secret mechanism (VM environment / Azure Key Vault) — never committed. In particular, `ATINA_JWT_SECRET` must be the actual HS256 signing secret of the Atina microservice (min. 32 bytes).
+- [ ] Migrate `identity_mapping` from embedded H2 (`./data/`) to Postgres if the server stops being single-instance or needs real durability — Flyway migrations are ready, it's a datasource change.
+- [ ] If running more than one instance: move `JdeSessionCache`/`JdeTokenStore` (in-memory maps) to a shared cache (Redis).
+- [ ] Re-evaluate the disabled CSRF and the `anyRequest().permitAll()` in `SecurityConfig` against the real exposure (today only `/mcp` and `/.well-known/**` exist).
 
 ---
 
