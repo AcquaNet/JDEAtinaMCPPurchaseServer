@@ -41,7 +41,7 @@ User (Claude.ai / Claude Desktop)
 Claude AI (MCP Client) ────────────► Keycloak (port 8180)
       │                              realm: jde-integration
       │  MCP over Streamable HTTP    (issues the OAuth2 JWT for
-      │  Authorization: Bearer JWT    client claude-desktop-mcp)
+      │  Authorization: Bearer JWT    client atina-mcp-server)
       ▼
 JDE MCP Server (this application, port 8080)
       │
@@ -69,7 +69,7 @@ JD Edwards EnterpriseOne        JD Edwards EnterpriseOne
 | Requirement | Details |
 |---|---|
 | MCP-compatible client | Claude.ai (Pro / Team / Enterprise) or any MCP client |
-| Keycloak | Running realm `jde-integration` with client `claude-desktop-mcp` (default: `http://localhost:8180`). Every request to `/mcp` requires a valid JWT from this realm |
+| Keycloak | Running realm `jde-integration` with client `atina-mcp-server` (default: `http://localhost:8180`). Every request to `/mcp` requires a valid JWT from this realm |
 | OpenBao | Running vault (default: `http://localhost:8200`) holding the real JDE credentials for the Identity Bridge. See [OpenBao (Credential Vault)](#openbao-credential-vault) |
 | JDE credentials | A valid JDE username and password — stored in OpenBao for mapped users, or entered manually via `jde_login` |
 | Network access | Client must be able to reach the MCP server URL |
@@ -131,7 +131,7 @@ JD Edwards EnterpriseOne        JD Edwards EnterpriseOne
 
 #### OAuth2 token required (Keycloak)
 
-The server is an **OAuth2 Resource Server**: every request to `/mcp` must carry a valid Keycloak JWT in the `Authorization: Bearer` header (realm `jde-integration`, audience `claude-desktop-mcp`). Requests without it are rejected with `401` before reaching any tool.
+The server is an **OAuth2 Resource Server**: every request to `/mcp` must carry a valid Keycloak JWT in the `Authorization: Bearer` header (realm `jde-integration`, audience `atina-mcp-server`). Requests without it are rejected with `401` before reaching any tool.
 
 For clients that don't handle the OAuth flow themselves, you can pass a token obtained manually from Keycloak via the `headers` field:
 
@@ -189,7 +189,7 @@ curl -s -X POST \
   http://localhost:8180/realms/jde-integration/protocol/openid-connect/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=password" \
-  -d "client_id=claude-desktop-mcp" \
+  -d "client_id=atina-mcp-server" \
   -d "username=<keycloak-user>" \
   -d "password=<keycloak-password>" | jq -r .access_token
 ```
@@ -210,7 +210,7 @@ Click **Connect**.
 
 Authentication works in **two layers connected by the Identity Bridge** — for a full step-by-step walkthrough with sequence diagrams, see **[AUTHENTICATION.md](AUTHENTICATION.md)**:
 
-1. **Keycloak (OAuth2)** — every request to `/mcp` must carry a valid JWT from realm `jde-integration` with audience `claude-desktop-mcp` in the `Authorization: Bearer` header. This is validated by Spring Security (signature, issuer, expiry, audience) before any tool runs. Without it: `401`.
+1. **Keycloak (OAuth2)** — every request to `/mcp` must carry a valid JWT from realm `jde-integration` with audience `atina-mcp-server` in the `Authorization: Bearer` header. This is validated by Spring Security (signature, issuer, expiry, audience) before any tool runs. Without it: `401`.
 
    **Alternative: Atina microservice tokens.** The server also accepts HS256 JWTs issued by the Atina/Mulesoft microservice (`/v1/login`) as the Bearer. Routing is by the token's `iss` claim; the signature is verified with the shared secret configured in `ATINA_JWT_SECRET` (min. 32 bytes — without it, Atina tokens are rejected and only Keycloak works). An Atina bearer **is** the JDE session token: the server uses it directly as `X-Approver-Token`, skipping the Identity Bridge entirely.
 2. **JDE session (automatic via Identity Bridge)** — the authenticated Keycloak `sub` is resolved against the `identity_mapping` table (jdeUser/environment/role), the real JDE password is fetched from **OpenBao**, and the server logs into JDE by itself. The resulting Mulesoft JWT is cached per `jde_user` (proactively renewed 60s before expiry) and sent as `X-Approver-Token` on every backend call. **Mapped users never type JDE credentials.**
@@ -550,7 +550,7 @@ Claude:  [calls jde_login if needed, then jde_get_customer_credit_info]
 
 | Error | Cause | Resolution |
 |---|---|---|
-| `401 Unauthorized` on `/mcp` | Missing/expired Keycloak JWT, or wrong audience | Obtain a fresh token from Keycloak (realm `jde-integration`, audience `claude-desktop-mcp`) |
+| `401 Unauthorized` on `/mcp` | Missing/expired Keycloak JWT, or wrong audience | Obtain a fresh token from Keycloak (realm `jde-integration`, audience `atina-mcp-server`) |
 | "Your user has no JDE user associated yet" | Keycloak `sub` has no row in `identity_mapping` | Register the user with `scripts/seed-identity-dev.sh`, or use `jde_login` manually |
 | Vault unavailable / `BAO_TOKEN` not configured | OpenBao down, or MCP Server started without `BAO_ADDR`/`BAO_TOKEN` | Start OpenBao and export both env vars where the server runs |
 | No credential in vault for user | Secret `secret/data/jde/<user>` missing (e.g., OpenBao dev-mode restart wiped it) | Re-seed the secret (see [OpenBao](#openbao-credential-vault)) |

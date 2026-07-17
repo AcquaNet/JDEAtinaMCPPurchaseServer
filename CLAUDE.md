@@ -37,7 +37,7 @@ To test tools interactively, run the server and launch the MCP Inspector (`npx @
 
 **Package structure** under `com.atina.jdeMCPServer`:
 
-- **`security/`** — OAuth2 Resource Server. `SecurityConfig` accepts two token types on `/mcp`, routed by the `iss` claim: (a) Keycloak JWTs (realm `jde-integration`, audience `claude-desktop-mcp`; OIDC discovery deferred via `SupplierJwtDecoder` so startup/tests work without Keycloak); (b) HS256 JWTs from the Atina/Mulesoft microservice (issuer `jde.atina.jwt.issuer`, shared secret `ATINA_JWT_SECRET` — these ARE the JDE session token and bypass the Identity Bridge, used directly as `X-Approver-Token`). `AuthenticatedJdeIdentity` exposes the Keycloak subject/claims of the current request (the Keycloak sub → JDE credential identity bridge is not built yet).
+- **`security/`** — OAuth2 Resource Server. `SecurityConfig` accepts two token types on `/mcp`, routed by the `iss` claim: (a) Keycloak JWTs (realm `jde-integration`, audience `atina-mcp-server`; OIDC discovery deferred via `SupplierJwtDecoder` so startup/tests work without Keycloak); (b) HS256 JWTs from the Atina/Mulesoft microservice (issuer `jde.atina.jwt.issuer`, shared secret `ATINA_JWT_SECRET` — these ARE the JDE session token and bypass the Identity Bridge, used directly as `X-Approver-Token`). `AuthenticatedJdeIdentity` exposes the Keycloak subject/claims of the current request (the Keycloak sub → JDE credential identity bridge is not built yet).
 - **`auth/`** — Session-based authentication against JDE via Mulesoft.
   - `JdeAuthService.getOrCreateToken()` is the single choke point for JDE tokens. Resolution order: (1) manual `jde_login` token for this MCP session (`Mcp-Session-Id` header, falling back to remote IP — what the MCP Inspector uses); (2) Identity Bridge: Keycloak `sub` → `IdentityResolver` → `JdeSessionCache.getOrLogin()` (per-`jde_user` in-memory cache, proactive renewal 60s before JWT expiry, credential fetched from OpenBao). The `Authorization` header carries the Keycloak JWT and is never used as a JDE token.
   - `JdeAuthClient` posts credentials to Mulesoft `/v1/login` (JDE environment `JDV920`, role `*ALL` are hardcoded there) and reads the JWT from the `X-Approver-Token` response header.
@@ -62,7 +62,7 @@ To test tools interactively, run the server and launch the MCP Inspector (`npx @
 - `jde.so.api.base-url` — Mulesoft backend URL for sales orders (same default)
 - `jde.api.login-timeout-minutes` — Login request timeout / token expiry buffer (default: 5)
 - `spring.security.oauth2.resourceserver.jwt.issuer-uri` — Keycloak issuer (default: `http://localhost:8180/realms/jde-integration`)
-- `jde.mcp.security.expected-audience` — Required `aud` claim in incoming tokens (default: `claude-desktop-mcp`)
+- `jde.mcp.security.expected-audience` — Required `aud` claim in incoming tokens (default: `atina-mcp-server`)
 - `jde.identity.resolver` — Active `IdentityResolver` impl (`native` | `federated`)
 - `jde.vault.addr` / `jde.vault.token` — OpenBao, from env vars `BAO_ADDR` / `BAO_TOKEN` (documented in the Keycloak compose `.env.example`)
 - `spring.datasource.url` — H2 file DB (`./data/`, gitignored) for `identity_mapping`; Flyway runs migrations on startup. Seed dev users with `scripts/seed-identity-dev.sh`

@@ -31,7 +31,13 @@
       "Bash(python3 -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\('secret escrito, version:',d.get\\('data',{}\\).get\\('version'\\)\\)\")",
       "Bash(chmod +x *)",
       "Bash(ps eww *)",
-      "Bash(ps -p 38252 -o command)"
+      "Bash(ps -p 38252 -o command)",
+      "Bash(curl -s -X POST http://localhost:8180/realms/jde-integration/protocol/openid-connect/token -H \"Content-Type: application/x-www-form-urlencoded\" -d \"grant_type=password\" -d \"client_id=claude-desktop-mcp\" -d \"username=jgodino\" -d \"password=Jde.Mcp2026\")",
+      "Bash(python3 -c \"import sys,json,base64;d=json.load\\(sys.stdin\\);t=d.get\\('access_token',''\\);p=t.split\\('.'\\)[1];p+='='*\\(-len\\(p\\)%4\\);c=json.loads\\(base64.urlsafe_b64decode\\(p\\)\\);print\\('scope en el token:',c.get\\('scope'\\)\\);print\\('scope del response:',d.get\\('scope'\\)\\)\")",
+      "Bash(curl -s -X POST http://localhost:8180/realms/jde-integration/protocol/openid-connect/token -H \"Content-Type: application/x-www-form-urlencoded\" -d \"grant_type=password\" -d \"client_id=claude-desktop-mcp\" -d \"username=jgodino\" -d \"password=Jde.Mcp2026\" -d \"scope=openid\")",
+      "Bash(python3 -c \"import sys,json;[print\\(f\\\\\"{c['clientId']:35} public={c['publicClient']} directGrants={c['directAccessGrantsEnabled']} stdFlow={c['standardFlowEnabled']}\\\\\"\\) for c in json.load\\(sys.stdin\\)]\")",
+      "Read(//Users/franciscogodinoconte/.mcp-auth/**)",
+      "Bash(rm -rf ~/.mcp-auth)"
     ]
   }
 }

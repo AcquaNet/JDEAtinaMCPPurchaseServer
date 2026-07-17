@@ -24,7 +24,7 @@ El servidor maneja **dos autenticaciones distintas que no se mezclan**. Entender
 ```
                   ┌──────────────────┐
                   │     Keycloak      │  realm: jde-integration
-                  │   (puerto 8180)   │  client: claude-desktop-mcp
+                  │   (puerto 8180)   │  client: atina-mcp-server
                   └────────┬─────────┘
         (1) obtiene JWT    │
             de Keycloak    │
@@ -42,7 +42,7 @@ El servidor maneja **dos autenticaciones distintas que no se mezclan**. Entender
 │                                           │
 │  (3) Spring Security valida el JWT:       │
 │      firma + issuer + expiración +        │
-│      audience == claude-desktop-mcp       │
+│      audience == atina-mcp-server       │
 │      → si falla: HTTP 401, no entra nadie │
 │                                           │
 │  (4) Identity Bridge: sub → tabla         │
@@ -69,7 +69,7 @@ Todo el endpoint MCP (`/mcp`). Ningún request llega a los tools sin un JWT de K
 
 ### Paso a paso
 
-1. **El cliente obtiene un token de Keycloak.** El cliente MCP (Claude Desktop, Claude.ai, o vos con `curl` para probar) se autentica contra el realm `jde-integration` y recibe un `access_token` (JWT) emitido para el client `claude-desktop-mcp`.
+1. **El cliente obtiene un token de Keycloak.** El cliente MCP (Claude Desktop, Claude.ai, o vos con `curl` para probar) se autentica contra el realm `jde-integration` y recibe un `access_token` (JWT) emitido para el client `atina-mcp-server`.
 
 2. **El cliente llama al MCP Server con ese token.** Cada request a `/mcp` lleva el header `Authorization: Bearer <access_token>`.
 
@@ -80,7 +80,7 @@ Todo el endpoint MCP (`/mcp`). Ningún request llega a los tools sin un JWT de K
    | **Firma** | Que el token esté firmado por Keycloak (claves públicas obtenidas del JWKS del realm) | 401 |
    | **Issuer** | Que el claim `iss` sea exactamente `http://localhost:8180/realms/jde-integration` | 401 |
    | **Expiración** | Que el claim `exp` no haya pasado | 401 |
-   | **Audiencia** | Que el claim `aud` contenga `claude-desktop-mcp` | 401 |
+   | **Audiencia** | Que el claim `aud` contenga `atina-mcp-server` | 401 |
 
    > La validación de **audiencia** es la que evita que cualquier token válido de Keycloak (emitido para otra aplicación del mismo realm) sirva para entrar a este servidor. Sin ella, un token de cualquier otro client sería aceptado.
 
@@ -132,7 +132,7 @@ curl -s -X POST \
   http://localhost:8180/realms/jde-integration/protocol/openid-connect/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=password" \
-  -d "client_id=claude-desktop-mcp" \
+  -d "client_id=atina-mcp-server" \
   -d "username=<usuario-keycloak>" \
   -d "password=<password-keycloak>" | jq -r .access_token
 ```
@@ -221,7 +221,7 @@ jde_login ──► token guardado ──► se usa en cada tool ──► Mules
 
 | Síntoma | Capa | Causa | Solución |
 |---|---|---|---|
-| `401 Unauthorized` en `/mcp` (el cliente ni conecta) | 1 | Falta el Bearer, está vencido, o la audiencia no es `claude-desktop-mcp` | Obtener un token nuevo de Keycloak / revisar el mapper de audiencia en el client |
+| `401 Unauthorized` en `/mcp` (el cliente ni conecta) | 1 | Falta el Bearer, está vencido, o la audiencia no es `atina-mcp-server` | Obtener un token nuevo de Keycloak / revisar el mapper de audiencia en el client |
 | `401` solo en el primer request tras arrancar | 1 | Keycloak apagado: el discovery perezoso falla al validar el primer token | Levantar Keycloak y reintentar |
 | El tool responde "Sesión JDE no encontrada… usá `jde_login`" | 2 | No hay token JDE para esta sesión MCP (nunca se logueó, o venció) | Llamar a `jde_login` |
 | Login falla con "Authentication failed" | 2 | Credenciales JDE inválidas, o Mulesoft no devolvió `X-Approver-Token` | Verificar credenciales / revisar Mulesoft |
@@ -270,7 +270,7 @@ En `src/main/resources/application.properties`:
 | Propiedad | Valor por defecto | Qué controla |
 |---|---|---|
 | `spring.security.oauth2.resourceserver.jwt.issuer-uri` | `http://localhost:8180/realms/jde-integration` | Contra qué Keycloak/realm se validan los tokens (Capa 1) |
-| `jde.mcp.security.expected-audience` | `claude-desktop-mcp` | Audiencia (`aud`) exigida en los tokens (Capa 1) |
+| `jde.mcp.security.expected-audience` | `atina-mcp-server` | Audiencia (`aud`) exigida en los tokens (Capa 1) |
 | `jde.api.base-url` | `http://localhost:8085/api` | Mulesoft para login y compras (Capa 2) |
 | `jde.so.api.base-url` | `http://localhost:8085/api` | Mulesoft para sales orders (Capa 2) |
 | `jde.api.login-timeout-minutes` | `5` | Timeout del request de login (Capa 2) |
