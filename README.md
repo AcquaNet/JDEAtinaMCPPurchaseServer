@@ -14,6 +14,7 @@ A
   - [Adding the MCP Server to Claude Desktop](#adding-the-mcp-server-to-claude-desktop)
 - [Testing with MCP Inspector](#testing-with-mcp-inspector)
 - [Authentication](#authentication)
+- [OpenBao (Credential Vault)](#openbao-credential-vault)
 - [Available Tools](#available-tools)
   - [Purchase Order Tools](#purchase-order-tools)
   - [Sales Order Tools](#sales-order-tools)
@@ -43,18 +44,23 @@ Claude AI (MCP Client) ────────────► Keycloak (port 81
       │  Authorization: Bearer JWT    client claude-desktop-mcp)
       ▼
 JDE MCP Server (this application, port 8080)
-      │  validates the Keycloak JWT (issuer + audience),
-      │  then calls Mulesoft with X-Approver-Token
+      │
+      │  1. validates the Keycloak JWT (issuer + audience)
+      │  2. Identity Bridge: Keycloak sub ──► identity_mapping (H2)
+      │                                  └──► OpenBao (port 8200)
+      │                                       secret/data/jde/<user>
+      │  3. auto-login to JDE, then calls Mulesoft
+      │     with X-Approver-Token
       ├──────────────────────────────┐
       ▼                              ▼
 Mulesoft Purchase API           Mulesoft Sales Order API
-(port 8083)                     (port 8083)
+(port 8085)                     (port 8085)
       │                              │
       ▼                              ▼
 JD Edwards EnterpriseOne        JD Edwards EnterpriseOne
 ```
 
-> Authentication happens in **two independent layers** (Keycloak to reach the server, `jde_login` to operate in JDE). See **[AUTHENTICATION.md](AUTHENTICATION.md)** for a step-by-step explanation with diagrams.
+> Authentication happens in **two layers** (Keycloak to reach the server, a JDE session to operate), connected by the **Identity Bridge**: mapped users are logged into JDE automatically — no manual `jde_login` needed. See **[AUTHENTICATION.md](AUTHENTICATION.md)** for a step-by-step explanation with diagrams.
 
 ---
 
@@ -64,7 +70,8 @@ JD Edwards EnterpriseOne        JD Edwards EnterpriseOne
 |---|---|
 | MCP-compatible client | Claude.ai (Pro / Team / Enterprise) or any MCP client |
 | Keycloak | Running realm `jde-integration` with client `claude-desktop-mcp` (default: `http://localhost:8180`). Every request to `/mcp` requires a valid JWT from this realm |
-| JDE credentials | A valid JDE username and password |
+| OpenBao | Running vault (default: `http://localhost:8200`) holding the real JDE credentials for the Identity Bridge. See [OpenBao (Credential Vault)](#openbao-credential-vault) |
+| JDE credentials | A valid JDE username and password — stored in OpenBao for mapped users, or entered manually via `jde_login` |
 | Network access | Client must be able to reach the MCP server URL |
 | Server runtime | The MCP server must be running and publicly reachable (e.g., via ngrok for local dev) |
 
@@ -201,12 +208,14 @@ Click **Connect**.
 
 ## Authentication
 
-Authentication works in **two independent layers** — for a full step-by-step walkthrough with sequence diagrams, see **[AUTHENTICATION.md](AUTHENTICATION.md)**:
+Authentication works in **two layers connected by the Identity Bridge** — for a full step-by-step walkthrough with sequence diagrams, see **[AUTHENTICATION.md](AUTHENTICATION.md)**:
 
 1. **Keycloak (OAuth2)** — every request to `/mcp` must carry a valid JWT from realm `jde-integration` with audience `claude-desktop-mcp` in the `Authorization: Bearer` header. This is validated by Spring Security (signature, issuer, expiry, audience) before any tool runs. Without it: `401`.
-2. **JDE session (`jde_login`)** — passing the Keycloak gate does **not** log you into JDE. Every session must begin with a `jde_login` call; the server stores the resulting Mulesoft token (keyed by MCP session), sends it as `X-Approver-Token` on every backend call, and transparently refreshes it when Mulesoft returns a renewed one. All subsequent tool calls reuse it until the session expires.
+2. **JDE session (automatic via Identity Bridge)** — the authenticated Keycloak `sub` is resolved against the `identity_mapping` table (jdeUser/environment/role), the real JDE password is fetched from **OpenBao**, and the server logs into JDE by itself. The resulting Mulesoft JWT is cached per `jde_user` (proactively renewed 60s before expiry) and sent as `X-Approver-Token` on every backend call. **Mapped users never type JDE credentials.**
 
-### Login Parameters
+**Fallback — manual `jde_login`:** if the Keycloak user has no row in `identity_mapping`, tools return a clear message ("your user has no JDE user associated yet") and the user can authenticate manually with the `jde_login` tool. A manual login always takes precedence over the bridge for that MCP session.
+
+### Manual login parameters (`jde_login`, fallback only)
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -221,13 +230,96 @@ Authentication works in **two independent layers** — for a full step-by-step w
 
 ---
 
+## OpenBao (Credential Vault)
+
+OpenBao stores the **real JDE passwords** used by the Identity Bridge. Design rule: neither Keycloak nor the MCP Server ever persist a JDE credential — the server fetches it from the vault at login time and keeps only the resulting session JWT in memory.
+
+### How it runs
+
+OpenBao is a service in the same `docker-compose.yml` as Keycloak (`JDEMCPServerKeycloak/` project):
+
+| Setting | Value |
+|---|---|
+| Image | `openbao/openbao:2.5.0` |
+| Port | `8200` |
+| Mode | **dev** (`server -dev`): starts unsealed, in-memory, with KV v2 mounted at `secret/` |
+| Root token | `OPENBAO_ROOT_TOKEN` env var (default: `dev-only-root-token`) |
+
+```bash
+# Start it (from the JDEMCPServerKeycloak directory)
+docker compose up -d openbao
+
+# Health check
+curl -s http://localhost:8200/v1/sys/health | jq
+```
+
+> ⚠️ Dev mode is in-memory: **secrets are lost when the container restarts** and must be re-seeded. Same criterion as Keycloak's `start-dev` — switch to server mode (file/raft storage) when moving to the Azure VM.
+
+### How the MCP Server connects to it
+
+Two environment variables, read by `application.properties` (`jde.vault.addr` / `jde.vault.token`) — never hardcoded:
+
+| Variable | Default | Description |
+|---|---|---|
+| `BAO_ADDR` | `http://localhost:8200` | OpenBao base URL |
+| `BAO_TOKEN` | *(none — required)* | Access token. In dev, use the root token; in production, a scoped token with read-only access to `secret/data/jde/*` |
+
+Export them in the shell (or IntelliJ run configuration) where the MCP Server runs:
+
+```bash
+export BAO_ADDR=http://localhost:8200
+export BAO_TOKEN=dev-only-root-token
+./mvnw spring-boot:run
+```
+
+Both are documented in the compose project's `.env.example`. If `BAO_TOKEN` is missing or OpenBao is down, tools fail with a *vault unavailable* error — deliberately distinguishable from a wrong JDE password.
+
+### Secret layout (KV v2)
+
+One secret per JDE user at `secret/data/jde/<JDE_USER>`:
+
+| Field | Required | Description |
+|---|---|---|
+| `password` | ✅ | The JDE password |
+| `user` | ❌ | JDE username override (defaults to the path name) |
+
+### Registering a user (dev)
+
+The seed script writes the OpenBao secret **and** the `identity_mapping` row in one step:
+
+```bash
+BAO_TOKEN=dev-only-root-token ./scripts/seed-identity-dev.sh \
+    <keycloak-sub> <jde-user> '<jde-password>' [environment] [role]
+
+# Example
+BAO_TOKEN=dev-only-root-token ./scripts/seed-identity-dev.sh \
+    ad27ed8d-849a-4f9e-a793-217bb38996d8 JDE 'secret' JDV920 '*ALL'
+```
+
+(The Keycloak `sub` is the user's **ID** field in the Keycloak console: realm `jde-integration` → Users → select user.)
+
+Or manually, secret only:
+
+```bash
+curl -s -X POST http://localhost:8200/v1/secret/data/jde/JDE \
+  -H "X-Vault-Token: $BAO_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"data": {"user": "JDE", "password": "secret"}}'
+
+# Verify
+curl -s http://localhost:8200/v1/secret/data/jde/JDE \
+  -H "X-Vault-Token: $BAO_TOKEN" | jq .data.data.user
+```
+
+---
+
 ## Available Tools
 
 ### Purchase Order Tools
 
 ### 1. `jde_login`
 
-Authenticates the user against JDE via the Mulesoft API. Must be called before any other tool.
+Authenticates the user against JDE via the Mulesoft API. **Only needed as a fallback**: users mapped in `identity_mapping` are logged into JDE automatically by the Identity Bridge and never call this tool.
 
 ```json
 {
@@ -414,8 +506,9 @@ Retrieves the credit limit and financial exposure for a JDE customer.
 
 ```
 User:  "Show me my pending purchase orders"
-       → jde_login (if no active session)
        → jde_list_pending_purchase_orders(limit=10)
+         (JDE login happens automatically via the Identity Bridge;
+          jde_login is only needed if the user has no identity mapping)
 
 User:  "Show me the detail for OP-5082"
        → jde_get_purchase_order_detail(OP, 5082, 00001, 000)
@@ -428,7 +521,7 @@ User:  "Approve it"
 
 ```
 User:    Give me all pending purchases for approval.
-Claude:  [calls jde_login, then jde_list_pending_purchase_orders]
+Claude:  [calls jde_list_pending_purchase_orders — no login needed, Identity Bridge]
          → Returns table with OP-5082 and OP-5083, both 120 days old, $1,315.13 USD each.
 
 User:    Show me detail of OP-5082.
@@ -456,7 +549,10 @@ Claude:  [calls jde_login if needed, then jde_get_customer_credit_info]
 | Error | Cause | Resolution |
 |---|---|---|
 | `401 Unauthorized` on `/mcp` | Missing/expired Keycloak JWT, or wrong audience | Obtain a fresh token from Keycloak (realm `jde-integration`, audience `claude-desktop-mcp`) |
-| `Session not found` | No active JDE session | Call `jde_login` first |
+| "Your user has no JDE user associated yet" | Keycloak `sub` has no row in `identity_mapping` | Register the user with `scripts/seed-identity-dev.sh`, or use `jde_login` manually |
+| Vault unavailable / `BAO_TOKEN` not configured | OpenBao down, or MCP Server started without `BAO_ADDR`/`BAO_TOKEN` | Start OpenBao and export both env vars where the server runs |
+| No credential in vault for user | Secret `secret/data/jde/<user>` missing (e.g., OpenBao dev-mode restart wiped it) | Re-seed the secret (see [OpenBao](#openbao-credential-vault)) |
+| `Session not found` | No JDE session and no identity mapping | Call `jde_login`, or register the mapping |
 | `Session expired` | Token timed out | Call `jde_login` again and retry |
 | `Invalid credentials` | Wrong username or password | Verify and retry |
 | `PO not found` | Wrong identifiers used | Use values directly from list tool |
@@ -467,7 +563,8 @@ Claude:  [calls jde_login if needed, then jde_get_customer_credit_info]
 ## Security Notes
 
 - The `/mcp` endpoint is protected by **OAuth2 (Keycloak)** with audience restriction — tokens issued for other clients of the same realm are rejected.
-- JDE credentials are passed at runtime only and are **never persisted** by the MCP server or the AI client; the JDE session token lives in memory only.
+- JDE passwords live **only in OpenBao**; neither Keycloak nor the MCP Server persist them. The server fetches them at login time and keeps only the session JWT in memory.
+- In production, replace the OpenBao dev root token with a **scoped token** (read-only policy on `secret/data/jde/*`) and switch OpenBao to server mode with persistent storage.
 - The `Authorization` header is never forwarded to Mulesoft/JDE; the JDE token travels separately in `X-Approver-Token`.
 - Use HTTPS for the MCP server URL at all times.
 - For production, replace ngrok with a stable, authenticated endpoint.

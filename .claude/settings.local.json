@@ -27,7 +27,11 @@
       "Bash(JAVA_HOME=/Users/franciscogodinoconte/.sdkman/candidates/java/25.0.1-tem nohup ./mvnw spring-boot:run)",
       "Bash(echo \"arrancando PID $!\")",
       "Bash(curl -s -m 120 -X POST http://localhost:8080/mcp -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Mcp-Session-Id: __TRACKED_VAR__' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"jde_list_pending_purchase_orders\",\"arguments\":{\"limit\":10}}}' -o /private/tmp/claude-501/-Users-franciscogodinoconte--IA-SpringIAProjects-JDEAtinaMCPPurchaseServer/102a7db4-9eda-44a2-b4f7-e8d579cc5266/scratchpad/orders.txt)",
-      "Bash(time curl -s -m 300 -X POST http://localhost:8080/mcp -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Mcp-Session-Id: __TRACKED_VAR__' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"jde_list_pending_purchase_orders\",\"arguments\":{\"limit\":5}}}' -o /private/tmp/claude-501/-Users-franciscogodinoconte--IA-SpringIAProjects-JDEAtinaMCPPurchaseServer/102a7db4-9eda-44a2-b4f7-e8d579cc5266/scratchpad/orders2.txt)"
+      "Bash(time curl -s -m 300 -X POST http://localhost:8080/mcp -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Mcp-Session-Id: __TRACKED_VAR__' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"jde_list_pending_purchase_orders\",\"arguments\":{\"limit\":5}}}' -o /private/tmp/claude-501/-Users-franciscogodinoconte--IA-SpringIAProjects-JDEAtinaMCPPurchaseServer/102a7db4-9eda-44a2-b4f7-e8d579cc5266/scratchpad/orders2.txt)",
+      "Bash(python3 -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\('secret escrito, version:',d.get\\('data',{}\\).get\\('version'\\)\\)\")",
+      "Bash(chmod +x *)",
+      "Bash(ps eww *)",
+      "Bash(ps -p 38252 -o command)"
     ]
   }
 }

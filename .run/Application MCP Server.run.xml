@@ -2,6 +2,10 @@
   <configuration default="false" name="Application MCP Server" type="Application" factoryName="Application">
     <option name="ALTERNATIVE_JRE_PATH" value="temurin-25" />
     <option name="ALTERNATIVE_JRE_PATH_ENABLED" value="true" />
+    <envs>
+      <env name="BAO_ADDR" value="http://localhost:8200" />
+      <env name="BAO_TOKEN" value="dev-only-root-token" />
+    </envs>
     <option name="MAIN_CLASS_NAME" value="com.atina.jdeMCPServer.Application" />
     <module name="JDEMCPServer" />
     <method v="2">

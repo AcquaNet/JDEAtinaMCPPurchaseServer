@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 JDE MCP Server — a Spring Boot application that implements a Model Context Protocol (MCP) server, bridging Claude AI and JD Edwards EnterpriseOne. It currently covers two modules: purchase order approval workflows and sales order customer credit queries. Claude.ai / Claude Desktop connect to the server directly over Streamable HTTP.
 
-**Request flow**: Claude AI → MCP Server (this app, port 8080) → Mulesoft API (port 8083) → JD Edwards EnterpriseOne
+**Request flow**: Claude AI → MCP Server (this app, port 8080) → Mulesoft API (port 8085) → JD Edwards EnterpriseOne
 
 ## Build & Run Commands
 
@@ -39,9 +39,11 @@ To test tools interactively, run the server and launch the MCP Inspector (`npx @
 
 - **`security/`** — OAuth2 Resource Server against Keycloak (realm `jde-integration`). `SecurityConfig` requires a valid Keycloak JWT on `/mcp` (audience must match `jde.mcp.security.expected-audience`, i.e. client `claude-desktop-mcp`); the `JwtDecoder` is wrapped in `SupplierJwtDecoder` so OIDC discovery is deferred to the first request — startup and tests work without Keycloak running. `AuthenticatedJdeIdentity` exposes the Keycloak subject/claims of the current request (the Keycloak sub → JDE credential identity bridge is not built yet).
 - **`auth/`** — Session-based authentication against JDE via Mulesoft.
-  - `JdeAuthService` resolves the session from the `Mcp-Session-Id` header (falls back to remote IP, which is what the MCP Inspector uses since it doesn't send that header). The `Authorization` header carries the Keycloak JWT and is never used as a JDE token; the JDE token is only obtained via `jde_login`.
+  - `JdeAuthService.getOrCreateToken()` is the single choke point for JDE tokens. Resolution order: (1) manual `jde_login` token for this MCP session (`Mcp-Session-Id` header, falling back to remote IP — what the MCP Inspector uses); (2) Identity Bridge: Keycloak `sub` → `IdentityResolver` → `JdeSessionCache.getOrLogin()` (per-`jde_user` in-memory cache, proactive renewal 60s before JWT expiry, credential fetched from OpenBao). The `Authorization` header carries the Keycloak JWT and is never used as a JDE token.
   - `JdeAuthClient` posts credentials to Mulesoft `/v1/login` (JDE environment `JDV920`, role `*ALL` are hardcoded there) and reads the JWT from the `X-Approver-Token` response header.
   - `JdeTokenStore` keeps JWT tokens in a ConcurrentHashMap keyed by session ID, with expiry parsed from the JWT `exp` claim and a 5-minute expiry buffer.
+- **`identity/`** — Identity Bridge: `IdentityResolver` interface resolving Keycloak `sub` → `JdeIdentity` (jdeUser/environment/role). Active impl selected by property `jde.identity.resolver`: `NativeMappingResolver` (reads `identity_mapping` table, H2 file DB + Flyway migrations in `db/migration/`) or `FederatedAttributeResolver` (LDAP stub, not implemented). Missing mapping → `UnmappedIdentityException` → clear user-facing error.
+- **`vault/`** — `CredentialVault` interface + `OpenBaoCredentialVault`: reads the real JDE password from OpenBao KV v2 at `secret/data/jde/{jdeUser}` (`BAO_ADDR`/`BAO_TOKEN` env vars; never stored locally). Distinguishes `VaultUnavailableException` (infra) from `VaultCredentialNotFoundException` (missing secret).
 - **`purchase/`** — Purchase order approval module: `services/JdePurchaseOrderClient` (REST calls to Mulesoft), `tools/` (MCP tools `jde_login`, `jde_list_pending_purchase_orders`, `jde_get_purchase_order_detail`, `jde_approve_purchase_order`, `jde_reject_purchase_order`), and `prompts/JDEPurPrompts` (`@McpPrompt` definitions guiding the workflow).
 - **`salesorder/`** — Sales order module: `services/JdeSalesOrderClient` and `tools/JdeCustomerCreditTool` (MCP tool `jde_get_customer_credit_info`).
 
@@ -61,6 +63,9 @@ To test tools interactively, run the server and launch the MCP Inspector (`npx @
 - `jde.api.login-timeout-minutes` — Login request timeout / token expiry buffer (default: 5)
 - `spring.security.oauth2.resourceserver.jwt.issuer-uri` — Keycloak issuer (default: `http://localhost:8180/realms/jde-integration`)
 - `jde.mcp.security.expected-audience` — Required `aud` claim in incoming tokens (default: `claude-desktop-mcp`)
+- `jde.identity.resolver` — Active `IdentityResolver` impl (`native` | `federated`)
+- `jde.vault.addr` / `jde.vault.token` — OpenBao, from env vars `BAO_ADDR` / `BAO_TOKEN` (documented in the Keycloak compose `.env.example`)
+- `spring.datasource.url` — H2 file DB (`./data/`, gitignored) for `identity_mapping`; Flyway runs migrations on startup. Seed dev users with `scripts/seed-identity-dev.sh`
 - MCP endpoint is `/mcp` (`spring.ai.mcp.server.streamable-http.mcp-endpoint`)
 - Tomcat timeouts set to 600s for long-lived SSE connections
 

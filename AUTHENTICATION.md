@@ -14,7 +14,7 @@ El servidor maneja **dos autenticaciones distintas que no se mezclan**. Entender
 | **Token** | JWT de Keycloak | JWT de Mulesoft/JDE |
 | **Viaja en el header** | `Authorization: Bearer <jwt>` | `X-Approver-Token: <jwt>` |
 | **Quién lo valida** | Spring Security (este servidor) | Mulesoft / JDE |
-| **Cómo se obtiene** | Flujo OAuth2 contra Keycloak | Tool `jde_login` (usuario y contraseña JDE) |
+| **Cómo se obtiene** | Flujo OAuth2 contra Keycloak | Identity Bridge (automático, para usuarios mapeados) o tool `jde_login` (fallback manual) |
 | **Dónde se guarda** | No se guarda (viene en cada request) | `JdeTokenStore` (en memoria, por sesión MCP) |
 
 > ⚠️ **Importante**: el header `Authorization` ya **no** se usa como token JDE. Antes de la migración, el servidor tomaba el Bearer del header y lo reenviaba a Mulesoft como `X-Approver-Token`. Eso ya no existe: el Bearer de Keycloak solo sirve para entrar al endpoint `/mcp`; el token JDE se obtiene únicamente con `jde_login`.
@@ -45,15 +45,17 @@ El servidor maneja **dos autenticaciones distintas que no se mezclan**. Entender
 │      audience == claude-desktop-mcp       │
 │      → si falla: HTTP 401, no entra nadie │
 │                                           │
-│  (4) El tool busca el token JDE en el     │
-│      JdeTokenStore (por Mcp-Session-Id)   │
-│      → si no hay: pide usar jde_login     │
+│  (4) Identity Bridge: sub → tabla         │
+│      identity_mapping → credencial en     │◄──── OpenBao (puerto 8200)
+│      OpenBao → login JDE automático       │      secret/data/jde/<user>
+│      (fallback: jde_login manual;         │
+│      cache de sesión por jde_user)        │
 └────────┬─────────────────────────────────┘
          │ (5) REST con X-Approver-Token: <jwt-jde>
          ▼
 ┌──────────────────┐        ┌──────────────────┐
 │  Mulesoft API     │───────►│  JD Edwards       │
-│  (puerto 8083)    │        │  EnterpriseOne    │
+│  (puerto 8085)    │        │  EnterpriseOne    │
 └──────────────────┘        └──────────────────┘
 ```
 
@@ -130,9 +132,9 @@ curl -s -X POST \
 
 ## Capa 2 — Sesión JDE: quién sos dentro de JD Edwards
 
-Pasar la puerta de Keycloak **no te loguea en JDE**. Para operar (listar órdenes, aprobar, etc.) hace falta una sesión JDE, que se crea con el tool `jde_login`.
+Pasar la puerta de Keycloak **no te loguea en JDE**: hace falta una sesión JDE. Para los usuarios dados de alta en `identity_mapping`, esa sesión la crea **automáticamente el Identity Bridge** (ver sección más abajo) — el usuario no tipea credenciales JDE nunca. El tool `jde_login` queda como **fallback manual** para usuarios sin mapeo; así funciona:
 
-### Paso a paso del login
+### Paso a paso del login manual (fallback)
 
 1. **Claude llama al tool `jde_login`** con el usuario y contraseña JDE que le pidió al usuario.
 
@@ -161,7 +163,7 @@ sequenceDiagram
     participant C as Claude (cliente MCP)
     participant S as JDE MCP Server
     participant T as JdeTokenStore<br/>(memoria)
-    participant W as Mulesoft (8083)
+    participant W as Mulesoft (8085)
 
     Note over C,S: Todos los requests ya pasaron la Capa 1 (JWT Keycloak válido)
 
@@ -216,16 +218,37 @@ jde_login ──► token guardado ──► se usa en cada tool ──► Mules
 
 ---
 
-## Pieza pendiente: el identity bridge
+## El Identity Bridge: las dos capas conectadas
 
-Hoy las dos capas están **desconectadas**: Keycloak dice quién sos, pero igual tenés que tipear usuario y contraseña JDE en `jde_login`.
+El bridge traduce el `sub` de Keycloak en una sesión JDE automática, **eliminando el `jde_login` manual** para los usuarios mapeados. Flujo dentro de `JdeAuthService.getOrCreateToken()`:
 
-El plan a futuro es un **identity bridge** que mapee el `sub` (subject) del token de Keycloak directamente a una credencial JDE (usuario/environment/role), eliminando el `jde_login` manual. La clase `AuthenticatedJdeIdentity` (en `security/`) ya expone lo necesario para construirlo:
+```
+sub de Keycloak (AuthenticatedJdeIdentity.currentSubject())
+   │
+   ▼
+IdentityResolver.resolve(sub)          ← tabla identity_mapping (H2 + Flyway)
+   │  jdeUser / jdeEnvironment / jdeRole
+   ▼
+JdeSessionCache.getOrLogin(identity)   ← cache en memoria por jde_user
+   │  ¿JWT cacheado y le quedan >60s? → usarlo
+   │  si no:
+   ▼
+CredentialVault.getCredential(jdeUser) ← OpenBao KV v2 (secret/data/jde/<user>)
+   │  contraseña real (nunca se persiste acá)
+   ▼
+JdeAuthClient.login(user, pass, env, role) → JWT JDE → cacheado y usado
+```
 
-- `currentSubject()` — el `sub` de Keycloak del request actual.
-- `currentJdeTechnicalAccountClaim()` — el claim custom `jde_technical_account`, para el caso de vendedores externos que se mapean a una cuenta técnica JDE por grupo, no por usuario individual.
+Reglas de resolución:
+1. Un `jde_login` **manual** previo para la sesión MCP gana sobre el bridge.
+2. Si el `sub` no tiene fila en `identity_mapping` → error claro: *"tu usuario no tiene un JDE asociado todavía"* (con `jde_login` como alternativa) — no un 500.
+3. El cache es por `jde_user`: dos usuarios Keycloak mapeados al mismo `jde_user` comparten sesión JDE. Renovación proactiva si el JWT expira en <60s.
 
-El componente que resuelve `sub → credencial JDE` todavía no está construido.
+La implementación de `IdentityResolver` se elige por configuración (`jde.identity.resolver=native|federated`): `NativeMappingResolver` (tabla local, activo) o `FederatedAttributeResolver` (stub para LDAP/AD futuro).
+
+Alta de un usuario (desarrollo): `scripts/seed-identity-dev.sh <keycloak_sub> <jde_user> <jde_password> [env] [role]` — guarda la credencial en OpenBao e inserta el mapeo.
+
+`AuthenticatedJdeIdentity` también expone `currentJdeTechnicalAccountClaim()` (claim `jde_technical_account`) para el caso futuro de vendedores externos mapeados a una cuenta técnica por grupo.
 
 ---
 
@@ -237,9 +260,11 @@ En `src/main/resources/application.properties`:
 |---|---|---|
 | `spring.security.oauth2.resourceserver.jwt.issuer-uri` | `http://localhost:8180/realms/jde-integration` | Contra qué Keycloak/realm se validan los tokens (Capa 1) |
 | `jde.mcp.security.expected-audience` | `claude-desktop-mcp` | Audiencia (`aud`) exigida en los tokens (Capa 1) |
-| `jde.api.base-url` | `http://localhost:8083/api` | Mulesoft para login y compras (Capa 2) |
-| `jde.so.api.base-url` | `http://localhost:8083/api` | Mulesoft para sales orders (Capa 2) |
+| `jde.api.base-url` | `http://localhost:8085/api` | Mulesoft para login y compras (Capa 2) |
+| `jde.so.api.base-url` | `http://localhost:8085/api` | Mulesoft para sales orders (Capa 2) |
 | `jde.api.login-timeout-minutes` | `5` | Timeout del request de login (Capa 2) |
+| `jde.identity.resolver` | `native` | Implementación de IdentityResolver (`native` \| `federated`) |
+| `jde.vault.addr` / `jde.vault.token` | `${BAO_ADDR}` / `${BAO_TOKEN}` | OpenBao (ver README, sección OpenBao) |
 
 Código involucrado:
 

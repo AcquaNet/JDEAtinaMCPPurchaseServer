@@ -31,7 +31,7 @@ public class JdeAuthClient {
 
         this.webClient = WebClient.builder()
                 .clientConnector(new ReactorClientHttpConnector(
-                        HttpClient.create().responseTimeout(Duration.ofSeconds(loginTimeoutMinutes))
+                        HttpClient.create().responseTimeout(Duration.ofMinutes(loginTimeoutMinutes))
                 ))
                 .build();
         this.objectMapper = objectMapper;
@@ -39,14 +39,19 @@ public class JdeAuthClient {
     }
 
     public LoginResult login(String user, String password) {
+        // Defaults históricos para el flujo manual (tool jde_login)
+        return login(user, password, "JDV920", "*ALL");
+    }
+
+    public LoginResult login(String user, String password, String environment, String role) {
 
         String requestJson;
         try {
             requestJson = objectMapper.writeValueAsString(Map.of(
                     "user",        user.toUpperCase(),
                     "password",    password,
-                    "environment", "JDV920",
-                    "role",        "*ALL"
+                    "environment", environment,
+                    "role",        (role != null && !role.isBlank()) ? role : "*ALL"
             ));
         } catch (Exception e) {
             throw new RuntimeException("Failed to serialize login request", e);
