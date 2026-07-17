@@ -3,8 +3,8 @@ package com.atina.jdeMCPServer.security;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configurers.oauth2.server.resource.OAuth2ResourceServerConfigurer;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
@@ -28,16 +28,32 @@ public class SecurityConfig {
     @Value("${jde.mcp.security.expected-audience}")
     private String expectedAudience;
 
+    private final McpResourceMetadataEntryPoint resourceMetadataEntryPoint;
+
+    public SecurityConfig(McpResourceMetadataEntryPoint resourceMetadataEntryPoint) {
+        this.resourceMetadataEntryPoint = resourceMetadataEntryPoint;
+    }
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable()) // el MCP Server no sirve forms; evaluar segun exposicion real
             .authorizeHttpRequests(auth -> auth
+                // Metadata RFC 9728: debe ser publico para que el cliente pueda
+                // descubrir el Authorization Server ANTES de tener token
+                .requestMatchers("/.well-known/**").permitAll()
                 // Endpoint MCP real: spring.ai.mcp.server.streamable-http.mcp-endpoint=/mcp
                 .requestMatchers("/mcp", "/mcp/**").authenticated()
                 .anyRequest().permitAll()
             )
-            .oauth2ResourceServer(OAuth2ResourceServerConfigurer::jwt);
+            // Entry point custom en ambos hooks: el del resource server cubre los 401
+            // por token invalido/ausente en requests Bearer; exceptionHandling queda
+            // como fallback global. Ambos agregan resource_metadata al WWW-Authenticate.
+            .oauth2ResourceServer(oauth2 -> oauth2
+                .jwt(Customizer.withDefaults())
+                .authenticationEntryPoint(resourceMetadataEntryPoint)
+            )
+            .exceptionHandling(ex -> ex.authenticationEntryPoint(resourceMetadataEntryPoint));
 
         return http.build();
     }
