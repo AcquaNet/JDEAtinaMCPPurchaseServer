@@ -110,6 +110,17 @@ sequenceDiagram
     end
 ```
 
+### Alternativa a Keycloak: tokens del microservicio de Atina
+
+El server también acepta como Bearer los JWT **HS256** que emite el propio microservicio de Atina/Mulesoft en `/v1/login` (los mismos que viajan como `X-Approver-Token`). Cómo funciona:
+
+1. `SecurityConfig` mira el claim `iss` del token (sin validar todavía): si es la URL del realm de Keycloak → rama OIDC normal; si es el issuer de Atina (`jde.atina.jwt.issuer`, default `Issue`) → rama HS256.
+2. La rama HS256 **verifica la firma** con el secreto compartido (`ATINA_JWT_SECRET`, mínimo 32 bytes) — el mismo con el que firma el microservicio. Sin ese secreto configurado, los tokens de Atina se rechazan con un error claro y solo funciona Keycloak.
+3. Un Bearer de Atina **ya es el token de sesión JDE**: `JdeAuthService` lo usa directamente como `X-Approver-Token` en cada llamada a Mulesoft. No pasa por el Identity Bridge ni por el vault (paso "0" en el orden de resolución, antes que el login manual y el bridge).
+4. Estos tokens no traen claim `exp`; la vigencia real la controla el microservicio (claim `sessionId`) en cada llamada.
+
+Caso de uso: clientes del ecosistema Atina que ya tienen una sesión JDE abierta pueden consumir el MCP Server sin pasar por Keycloak.
+
 ### Detalle de implementación: el discovery es "perezoso"
 
 `SecurityConfig` envuelve el decoder en un `SupplierJwtDecoder`: la llamada a Keycloak para descargar la configuración OIDC y las claves públicas **no ocurre al arrancar el servidor**, sino recién cuando llega el primer token a validar. Por eso el servidor (y los tests) arrancan aunque Keycloak esté apagado — pero el primer request a `/mcp` fallará si Keycloak no está disponible en ese momento.

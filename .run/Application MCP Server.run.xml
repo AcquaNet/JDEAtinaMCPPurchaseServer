@@ -3,6 +3,7 @@
     <option name="ALTERNATIVE_JRE_PATH" value="temurin-25" />
     <option name="ALTERNATIVE_JRE_PATH_ENABLED" value="true" />
     <envs>
+      <env name="ATINA_JWT_SECRET" value="eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiI4MzI1NTUiLCJpYXQiOjE3ODQzMjMyNTIsInN1YiI6IlN1YmplY3QiLCJpc3MiOiJJc3N1ZSIsInVzZXIiOiJKREUiLCJwYXNzd29yZCI6ImJVdUZ3cGJyK1lOcEhrNGtsU3ZsUUZkM1lEWmFMQXJtc2RJdXFqcUg0MDhIVjV0QmV0RT0iLCJlbnZpcm9ubWVudCI6IkpEVjkyMCIsInJvbGUiOiIqQUxMIiwic2Vzc2lvbklkIjotMzUzMDkzNTQ2fQ.FzdVleYlR1pUPweVah0j2UC8d3cTyYksDVx33QowdzU" />
       <env name="BAO_ADDR" value="http://localhost:8200" />
       <env name="BAO_TOKEN" value="dev-only-root-token" />
     </envs>

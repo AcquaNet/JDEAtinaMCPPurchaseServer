@@ -211,6 +211,8 @@ Click **Connect**.
 Authentication works in **two layers connected by the Identity Bridge** — for a full step-by-step walkthrough with sequence diagrams, see **[AUTHENTICATION.md](AUTHENTICATION.md)**:
 
 1. **Keycloak (OAuth2)** — every request to `/mcp` must carry a valid JWT from realm `jde-integration` with audience `claude-desktop-mcp` in the `Authorization: Bearer` header. This is validated by Spring Security (signature, issuer, expiry, audience) before any tool runs. Without it: `401`.
+
+   **Alternative: Atina microservice tokens.** The server also accepts HS256 JWTs issued by the Atina/Mulesoft microservice (`/v1/login`) as the Bearer. Routing is by the token's `iss` claim; the signature is verified with the shared secret configured in `ATINA_JWT_SECRET` (min. 32 bytes — without it, Atina tokens are rejected and only Keycloak works). An Atina bearer **is** the JDE session token: the server uses it directly as `X-Approver-Token`, skipping the Identity Bridge entirely.
 2. **JDE session (automatic via Identity Bridge)** — the authenticated Keycloak `sub` is resolved against the `identity_mapping` table (jdeUser/environment/role), the real JDE password is fetched from **OpenBao**, and the server logs into JDE by itself. The resulting Mulesoft JWT is cached per `jde_user` (proactively renewed 60s before expiry) and sent as `X-Approver-Token` on every backend call. **Mapped users never type JDE credentials.**
 
 **Fallback — manual `jde_login`:** if the Keycloak user has no row in `identity_mapping`, tools return a clear message ("your user has no JDE user associated yet") and the user can authenticate manually with the `jde_login` tool. A manual login always takes precedence over the bridge for that MCP session.

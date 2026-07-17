@@ -55,6 +55,13 @@ public class JdeAuthService {
     public String getOrCreateToken() {
         String sessionId = resolveSessionId();
 
+        // 0. Bearer emitido por el microservicio de Atina: ya ES el token de
+        //    sesión JDE (firmado y validado por Spring Security), se usa directo
+        var atinaToken = authenticatedIdentity.currentAtinaSessionToken();
+        if (atinaToken.isPresent()) {
+            return atinaToken.get();
+        }
+
         // 1. Login manual previo (tool jde_login) para esta sesión MCP
         var manualToken = tokenStore.getToken(sessionId);
         if (manualToken.isPresent()) {
@@ -117,6 +124,11 @@ public class JdeAuthService {
     public void updateTokenFromResponse(org.springframework.http.HttpHeaders headers) {
         String newToken = headers.getFirst("X-Approver-Token");
         if (newToken == null || newToken.isBlank()) {
+            return;
+        }
+        // Bearer de Atina: el cliente es dueño de su token y lo presenta en cada
+        // request; no hay nada que refrescar de nuestro lado
+        if (authenticatedIdentity.currentAtinaSessionToken().isPresent()) {
             return;
         }
         Object bridgeUser = currentRequestAttributes().getAttribute(

@@ -1,9 +1,12 @@
 package com.atina.jdeMCPServer.security;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
+
+import java.util.Optional;
 
 /**
  * Punto unico para leer la identidad Keycloak del request actual,
@@ -20,6 +23,28 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class AuthenticatedJdeIdentity {
+
+    private final String atinaIssuer;
+
+    public AuthenticatedJdeIdentity(@Value("${jde.atina.jwt.issuer:Issue}") String atinaIssuer) {
+        this.atinaIssuer = atinaIssuer;
+    }
+
+    /**
+     * Si el request se autenticó con un token del microservicio de Atina
+     * (en vez de Keycloak), devuelve ese token crudo: ES el token de sesión
+     * JDE y se usa directamente como X-Approver-Token, sin Identity Bridge.
+     */
+    public Optional<String> currentAtinaSessionToken() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth instanceof JwtAuthenticationToken jwtAuth) {
+            Jwt jwt = jwtAuth.getToken();
+            if (atinaIssuer.equals(jwt.getClaimAsString("iss"))) {
+                return Optional.of(jwt.getTokenValue());
+            }
+        }
+        return Optional.empty();
+    }
 
     public String currentSubject() {
         var auth = SecurityContextHolder.getContext().getAuthentication();
