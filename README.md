@@ -37,19 +37,24 @@ The JDE MCP Server allows Claude (or any MCP-compatible AI assistant) to interac
 User (Claude.ai / Claude Desktop)
       │
       ▼
-Claude AI (MCP Client)
-      │  MCP over Streamable HTTP
+Claude AI (MCP Client) ────────────► Keycloak (port 8180)
+      │                              realm: jde-integration
+      │  MCP over Streamable HTTP    (issues the OAuth2 JWT for
+      │  Authorization: Bearer JWT    client claude-desktop-mcp)
       ▼
 JDE MCP Server (this application, port 8080)
-      │  REST API calls
+      │  validates the Keycloak JWT (issuer + audience),
+      │  then calls Mulesoft with X-Approver-Token
       ├──────────────────────────────┐
       ▼                              ▼
 Mulesoft Purchase API           Mulesoft Sales Order API
-(port 8081)                     (port 8083)
+(port 8083)                     (port 8083)
       │                              │
       ▼                              ▼
 JD Edwards EnterpriseOne        JD Edwards EnterpriseOne
 ```
+
+> Authentication happens in **two independent layers** (Keycloak to reach the server, `jde_login` to operate in JDE). See **[AUTHENTICATION.md](AUTHENTICATION.md)** for a step-by-step explanation with diagrams.
 
 ---
 
@@ -58,6 +63,7 @@ JD Edwards EnterpriseOne        JD Edwards EnterpriseOne
 | Requirement | Details |
 |---|---|
 | MCP-compatible client | Claude.ai (Pro / Team / Enterprise) or any MCP client |
+| Keycloak | Running realm `jde-integration` with client `claude-desktop-mcp` (default: `http://localhost:8180`). Every request to `/mcp` requires a valid JWT from this realm |
 | JDE credentials | A valid JDE username and password |
 | Network access | Client must be able to reach the MCP server URL |
 | Server runtime | The MCP server must be running and publicly reachable (e.g., via ngrok for local dev) |
@@ -116,9 +122,11 @@ JD Edwards EnterpriseOne        JD Edwards EnterpriseOne
 3. Save the file and restart Claude Desktop.
 4. You should see the MCP tools (hammer icon) available in the chat input.
 
-#### Pre-authenticated token (skip login)
+#### OAuth2 token required (Keycloak)
 
-To avoid calling `jde_login` on every conversation, you can pass a JDE token directly in the Claude Desktop config using the `headers` field. The server will pick it up automatically:
+The server is an **OAuth2 Resource Server**: every request to `/mcp` must carry a valid Keycloak JWT in the `Authorization: Bearer` header (realm `jde-integration`, audience `claude-desktop-mcp`). Requests without it are rejected with `401` before reaching any tool.
+
+For clients that don't handle the OAuth flow themselves, you can pass a token obtained manually from Keycloak via the `headers` field:
 
 ```json
 {
@@ -126,16 +134,14 @@ To avoid calling `jde_login` on every conversation, you can pass a JDE token dir
     "jde-atina": {
       "url": "http://localhost:8080/mcp",
       "headers": {
-        "Authorization": "Bearer <your-jde-token>"
+        "Authorization": "Bearer <keycloak-access-token>"
       }
     }
   }
 }
 ```
 
-With this configuration, all MCP tools work immediately without calling `jde_login` first. The server reads the `Authorization` header, stores the token for the session, and reuses it for all subsequent calls.
-
-> ⚠️ If the token eventually expires, you will need to update it manually in the config and restart Claude Desktop.
+> ⚠️ **This is no longer the JDE token.** The old "pre-authenticated JDE token" flow was removed: the `Authorization` header now carries the *Keycloak* token, which only grants access to the server. Logging into JDE is always done with the `jde_login` tool. Also note Keycloak access tokens are short-lived, so a static header like the above is only practical for quick tests. See [AUTHENTICATION.md](AUTHENTICATION.md) for how to obtain a token.
 
 ---
 
@@ -167,6 +173,19 @@ In the Inspector UI:
 |---|---|
 | Transport Type | **Streamable HTTP** |
 | URL | `http://localhost:8080/mcp` |
+| Authentication → Header | `Authorization: Bearer <keycloak-access-token>` |
+
+The bearer token is **mandatory** — without a valid Keycloak JWT the server returns `401`. Obtain one with:
+
+```bash
+curl -s -X POST \
+  http://localhost:8180/realms/jde-integration/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password" \
+  -d "client_id=claude-desktop-mcp" \
+  -d "username=<keycloak-user>" \
+  -d "password=<keycloak-password>" | jq -r .access_token
+```
 
 Click **Connect**.
 
@@ -182,7 +201,10 @@ Click **Connect**.
 
 ## Authentication
 
-**Every session must begin with a login call.** The server maintains a session token after authentication; all subsequent tool calls reuse it until the session expires.
+Authentication works in **two independent layers** — for a full step-by-step walkthrough with sequence diagrams, see **[AUTHENTICATION.md](AUTHENTICATION.md)**:
+
+1. **Keycloak (OAuth2)** — every request to `/mcp` must carry a valid JWT from realm `jde-integration` with audience `claude-desktop-mcp` in the `Authorization: Bearer` header. This is validated by Spring Security (signature, issuer, expiry, audience) before any tool runs. Without it: `401`.
+2. **JDE session (`jde_login`)** — passing the Keycloak gate does **not** log you into JDE. Every session must begin with a `jde_login` call; the server stores the resulting Mulesoft token (keyed by MCP session), sends it as `X-Approver-Token` on every backend call, and transparently refreshes it when Mulesoft returns a renewed one. All subsequent tool calls reuse it until the session expires.
 
 ### Login Parameters
 
@@ -433,6 +455,7 @@ Claude:  [calls jde_login if needed, then jde_get_customer_credit_info]
 
 | Error | Cause | Resolution |
 |---|---|---|
+| `401 Unauthorized` on `/mcp` | Missing/expired Keycloak JWT, or wrong audience | Obtain a fresh token from Keycloak (realm `jde-integration`, audience `claude-desktop-mcp`) |
 | `Session not found` | No active JDE session | Call `jde_login` first |
 | `Session expired` | Token timed out | Call `jde_login` again and retry |
 | `Invalid credentials` | Wrong username or password | Verify and retry |
@@ -443,7 +466,9 @@ Claude:  [calls jde_login if needed, then jde_get_customer_credit_info]
 
 ## Security Notes
 
-- Credentials are passed at runtime only and are **never persisted** by the MCP server or the AI client.
+- The `/mcp` endpoint is protected by **OAuth2 (Keycloak)** with audience restriction — tokens issued for other clients of the same realm are rejected.
+- JDE credentials are passed at runtime only and are **never persisted** by the MCP server or the AI client; the JDE session token lives in memory only.
+- The `Authorization` header is never forwarded to Mulesoft/JDE; the JDE token travels separately in `X-Approver-Token`.
 - Use HTTPS for the MCP server URL at all times.
 - For production, replace ngrok with a stable, authenticated endpoint.
 - Remark fields are capped at **30 characters** by the JDE backend.

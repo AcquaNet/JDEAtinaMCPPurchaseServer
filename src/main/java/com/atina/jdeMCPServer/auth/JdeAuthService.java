@@ -23,16 +23,21 @@ public class JdeAuthService {
     // ---------------------------------------------------------------
 
     /**
-     * Devuelve el token JDE para la sesión actual.
-     * Orden de resolución:
-     *   1. Token almacenado y vigente para este Mcp-Session-Id
-     *   2. Token del header Authorization (flujo legacy / inspector MCP)
-     * Si ninguno existe, lanza excepción con mensaje claro para Claude.
+     * Devuelve el token JDE para la sesión actual (almacenado y vigente
+     * para este Mcp-Session-Id). Si no existe, lanza excepción con mensaje
+     * claro para Claude.
+     *
+     * Nota: el header Authorization ya NO se usa como fuente del token JDE.
+     * Ahora transporta el JWT de Keycloak, validado por Spring Security
+     * (ver SecurityConfig); no es un token Mulesoft/JDE.
      */
     public String getOrCreateToken() {
         String sessionId = resolveSessionId();
         return tokenStore.getToken(sessionId)
-                .orElseGet(() -> initTokenFromAuthorizationHeader(sessionId));
+                .orElseThrow(() -> new JdeSessionNotFoundException(
+                        "Sesión JDE no encontrada para esta sesión. " +
+                                "Por favor autentícate usando el tool 'jde_login' con tu usuario y contraseña JDE."
+                ));
     }
 
     /**
@@ -88,33 +93,6 @@ public class JdeAuthService {
         String fallback = request.getRemoteAddr();
         log.debug("Mcp-Session-Id no presente, usando IP como fallback: {}", fallback);
         return fallback;
-    }
-
-    // ---------------------------------------------------------------
-    // Inicialización desde Authorization header (flujo legacy)
-    // ---------------------------------------------------------------
-
-    private String initTokenFromAuthorizationHeader(String sessionId) {
-        HttpServletRequest request = currentRequest();
-        String authHeader = request.getHeader("Authorization");
-
-        log.info("Intentando inicializar token desde Authorization header para sesión [{}]", sessionId);
-
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            throw new JdeSessionNotFoundException(
-                    "Sesión JDE no encontrada para esta sesión. " +
-                            "Por favor autentícate usando el tool 'jde_login' con tu usuario y contraseña JDE."
-            );
-        }
-
-        String token = authHeader.substring("Bearer ".length()).trim();
-        if (token.isEmpty()) {
-            throw new IllegalStateException("Authorization header Bearer token is empty.");
-        }
-
-        log.info("Token inicializado desde Authorization header para sesión [{}]", sessionId);
-        tokenStore.setToken(sessionId, token);
-        return token;
     }
 
     private HttpServletRequest currentRequest() {

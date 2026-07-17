@@ -4,7 +4,14 @@
       "Bash(./mvnw compile:*)",
       "Bash(git stash:*)",
       "Bash(java:*)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080/mcp)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080/mcp)",
+      "Bash(./mvnw clean *)",
+      "Read(//Users/franciscogodinoconte/.sdkman/candidates/java/**)",
+      "Read(//Users/franciscogodinoconte/Library/Java/JavaVirtualMachines/**)",
+      "Read(//Library/Java/JavaVirtualMachines/**)",
+      "Bash(JAVA_HOME=/Users/franciscogodinoconte/.sdkman/candidates/java/25.0.1-tem ./mvnw clean test)",
+      "Bash(curl -s -m 5 -o /dev/null -w \"realm-status:%{http_code}\\\\n\" http://localhost:8180/realms/jde-integration/.well-known/openid-configuration)",
+      "Bash(docker exec *)"
     ]
   }
 }
