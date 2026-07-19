@@ -37,7 +37,8 @@
       "Bash(curl -s -X POST http://localhost:8180/realms/jde-integration/protocol/openid-connect/token -H \"Content-Type: application/x-www-form-urlencoded\" -d \"grant_type=password\" -d \"client_id=claude-desktop-mcp\" -d \"username=jgodino\" -d \"password=Jde.Mcp2026\" -d \"scope=openid\")",
       "Bash(python3 -c \"import sys,json;[print\\(f\\\\\"{c['clientId']:35} public={c['publicClient']} directGrants={c['directAccessGrantsEnabled']} stdFlow={c['standardFlowEnabled']}\\\\\"\\) for c in json.load\\(sys.stdin\\)]\")",
       "Read(//Users/franciscogodinoconte/.mcp-auth/**)",
-      "Bash(rm -rf ~/.mcp-auth)"
+      "Bash(rm -rf ~/.mcp-auth)",
+      "Bash(python3 *)"
     ]
   }
 }
