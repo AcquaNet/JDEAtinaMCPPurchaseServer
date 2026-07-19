@@ -1,12 +1,14 @@
 package com.atina.jdeMCPServer.purchase.tools;
 
 import com.atina.jdeMCPServer.purchase.services.JdePurchaseOrderClient;
+import com.atina.jdeMCPServer.security.RealmRoleGuard;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
@@ -19,11 +21,18 @@ public class JdePurchaseApprovalTool {
 
     private final JdePurchaseOrderClient jdeClient;
     private final ObjectMapper objectMapper;
+    private final RealmRoleGuard roleGuard;
+    private final String approverRole;
 
 
-    public JdePurchaseApprovalTool(JdePurchaseOrderClient jdeClient, ObjectMapper objectMapper) {
+    public JdePurchaseApprovalTool(JdePurchaseOrderClient jdeClient,
+                                   ObjectMapper objectMapper,
+                                   RealmRoleGuard roleGuard,
+                                   @Value("${jde.mcp.security.approver-role}") String approverRole) {
         this.jdeClient = jdeClient;
         this.objectMapper = objectMapper;
+        this.roleGuard = roleGuard;
+        this.approverRole = approverRole;
     }
 
     // =========================
@@ -323,6 +332,22 @@ public class JdePurchaseApprovalTool {
             String documentSuffix,
             String remark
     ) {
+
+        // Autorización: decidir sobre una OC exige el rol de aprobador en Keycloak.
+        // Listar y ver detalle quedan abiertos a cualquier usuario autenticado.
+        if (!roleGuard.hasRealmRole(approverRole)) {
+            log.warn("Intento de {} OC {}-{} sin el rol '{}'",
+                    "A".equals(action) ? "aprobar" : "rechazar",
+                    documentOrderTypeCode, documentOrderInvoiceNumber, approverRole);
+            return """
+                   You are not authorized to %s purchase orders: your user does not have \
+                   the '%s' role in Keycloak. Ask your administrator to assign it \
+                   (Keycloak console -> Users -> your user -> Role mapping) and log in again.
+                   """.formatted(
+                    "A".equals(action) ? "approve" : "reject",
+                    approverRole
+            );
+        }
 
         String safeRemark = (remark != null) ? remark.trim() : "";
         if (safeRemark.length() > 30) {

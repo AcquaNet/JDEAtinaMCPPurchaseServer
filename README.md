@@ -13,7 +13,9 @@ A
   - [Adding the MCP Server to Claude.ai](#adding-the-mcp-server-to-claudeai)
   - [Adding the MCP Server to Claude Desktop](#adding-the-mcp-server-to-claude-desktop)
 - [Testing with MCP Inspector](#testing-with-mcp-inspector)
+- [Testing guide (OAuth 2.1): TESTING.md](TESTING.md)
 - [Authentication](#authentication)
+- [Token validation & authorization (roles/scopes): AUTHORIZATION.md](AUTHORIZATION.md)
 - [OpenBao (Credential Vault)](#openbao-credential-vault)
 - [Available Tools](#available-tools)
   - [Purchase Order Tools](#purchase-order-tools)
@@ -157,6 +159,8 @@ For clients that don't handle the OAuth flow themselves, you can pass a token ob
 
 The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is a developer tool for testing and debugging MCP servers interactively.
 
+> **Full testing guide**: see **[TESTING.md](TESTING.md)** for step-by-step instructions to test the server with **Postman (OAuth 2.1 / Authorization Code + PKCE)**, the MCP Inspector, or plain curl — including the exact MCP request sequence, required headers, and a troubleshooting table for every common 401/error.
+
 ### 1. Start the MCP server
 
 ```bash
@@ -217,6 +221,8 @@ Authentication works in **two layers connected by the Identity Bridge** — for 
 2. **JDE session (automatic via Identity Bridge)** — the authenticated Keycloak `sub` is resolved against the `identity_mapping` table (jdeUser/environment/role), the real JDE password is fetched from **OpenBao**, and the server logs into JDE by itself. The resulting Mulesoft JWT is cached per `jde_user` (proactively renewed 60s before expiry) and sent as `X-Approver-Token` on every backend call. **Mapped users never type JDE credentials.**
 
 **Fallback — manual `jde_login`:** if the Keycloak user has no row in `identity_mapping`, tools return a clear message ("your user has no JDE user associated yet") and the user can authenticate manually with the `jde_login` tool. A manual login always takes precedence over the bridge for that MCP session.
+
+**Authorization (roles):** approving or rejecting a purchase order additionally requires the Keycloak realm role **`purchase-order-approve`** (claim `realm_access.roles`); users without it get a clear denial message before any backend call. See **[AUTHORIZATION.md](AUTHORIZATION.md)** for the full token-validation pipeline and the roles/scopes model.
 
 ### Manual login parameters (`jde_login`, fallback only)
 

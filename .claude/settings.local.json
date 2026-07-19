@@ -38,7 +38,9 @@
       "Bash(python3 -c \"import sys,json;[print\\(f\\\\\"{c['clientId']:35} public={c['publicClient']} directGrants={c['directAccessGrantsEnabled']} stdFlow={c['standardFlowEnabled']}\\\\\"\\) for c in json.load\\(sys.stdin\\)]\")",
       "Read(//Users/franciscogodinoconte/.mcp-auth/**)",
       "Bash(rm -rf ~/.mcp-auth)",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Bash(curl -s -o /dev/null -w \"%{redirect_url}\\\\n\" \"http://localhost:8180/realms/jde-integration/protocol/openid-connect/auth?client_id=atina-mcp-server&response_type=code&redirect_uri=http://localhost:8123/callback&scope=openid\")",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code} \\(200 = muestra la pantalla de login\\)\\\\n\" \"http://localhost:8180/realms/jde-integration/protocol/openid-connect/auth?client_id=atina-mcp-server&response_type=code&redirect_uri=http://localhost:8123/callback&scope=openid&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256\")"
     ]
   }
 }
