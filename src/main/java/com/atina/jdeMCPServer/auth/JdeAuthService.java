@@ -62,6 +62,15 @@ public class JdeAuthService {
             return atinaToken.get();
         }
 
+        // 0.b Token de sesión JDE incrustado por Keycloak en el claim "atina_token":
+        //     el usuario se autenticó con Keycloak, pero el JWT trae la sesión JDE
+        //     emitida por Atina como un claim. Se usa directo como X-Approver-Token,
+        //     sin Identity Bridge ni vault (misma semántica que 0, distinta fuente).
+        var atinaClaim = authenticatedIdentity.currentAtinaTokenClaim();
+        if (atinaClaim.isPresent()) {
+            return atinaClaim.get();
+        }
+
         // 1. Login manual previo (tool jde_login) para esta sesión MCP
         var manualToken = tokenStore.getToken(sessionId);
         if (manualToken.isPresent()) {
@@ -126,9 +135,11 @@ public class JdeAuthService {
         if (newToken == null || newToken.isBlank()) {
             return;
         }
-        // Bearer de Atina: el cliente es dueño de su token y lo presenta en cada
-        // request; no hay nada que refrescar de nuestro lado
-        if (authenticatedIdentity.currentAtinaSessionToken().isPresent()) {
+        // Token de Atina (bearer directo o claim "atina_token" del JWT de Keycloak):
+        // la sesión JDE la controla Atina/Keycloak, no la almacenamos ni refrescamos
+        // de nuestro lado (no hay dónde reinyectar un token renovado).
+        if (authenticatedIdentity.currentAtinaSessionToken().isPresent()
+                || authenticatedIdentity.currentAtinaTokenClaim().isPresent()) {
             return;
         }
         Object bridgeUser = currentRequestAttributes().getAttribute(
