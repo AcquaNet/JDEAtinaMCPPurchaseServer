@@ -23,6 +23,7 @@ import org.springframework.security.oauth2.jwt.SupplierJwtDecoder;
 import org.springframework.security.web.SecurityFilterChain;
 
 import javax.crypto.spec.SecretKeySpec;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
@@ -71,6 +72,12 @@ public class SecurityConfig {
     @Value("${jde.atina.jwt.issuer:Issue}")
     private String atinaIssuer;
 
+    // Vacío por defecto = no exige "aud" en tokens Atina (compat con lo que emite
+    // hoy el microservicio, que no trae ese claim). Setear para exigirlo una vez
+    // que Atina empiece a incluirlo en el token.
+    @Value("${jde.atina.jwt.expected-audience:}")
+    private String atinaExpectedAudience;
+
     private static final ObjectMapper CLAIMS_PEEKER = new ObjectMapper();
 
     /**
@@ -106,13 +113,8 @@ public class SecurityConfig {
 
             // Validador de audiencia: sin esto, CUALQUIER token valido de Keycloak
             // (de otro client, de otra realm-app) seria aceptado por este resource server.
-            OAuth2TokenValidator<Jwt> audienceValidator =
-                jwt -> jwt.getAudience().contains(expectedAudience)
-                    ? OAuth2TokenValidatorResult.success()
-                    : OAuth2TokenValidatorResult.failure(new OAuth2Error(
-                        "invalid_token", "Audiencia no coincide con " + expectedAudience, null));
-
-            decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(List.of(withIssuer, audienceValidator)));
+            decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                    List.of(withIssuer, audienceValidator(expectedAudience))));
             return decoder;
         });
     }
@@ -138,12 +140,28 @@ public class SecurityConfig {
                     .withSecretKey(new SecretKeySpec(keyBytes, "HmacSHA256"))
                     .macAlgorithm(MacAlgorithm.HS256)
                     .build();
-            decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(List.of(
+
+            List<OAuth2TokenValidator<Jwt>> validators = new ArrayList<>(List.of(
                     new JwtTimestampValidator(),
                     new JwtIssuerValidator(atinaIssuer)
-            )));
+            ));
+            // Opt-in: hoy el token de Atina no trae "aud", así que por defecto
+            // (property vacía) no se exige. Setear jde.atina.jwt.expected-audience
+            // una vez que Atina empiece a emitir ese claim.
+            if (!atinaExpectedAudience.isBlank()) {
+                validators.add(audienceValidator(atinaExpectedAudience));
+            }
+            decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(validators));
             return decoder;
         });
+    }
+
+    /** Falla si "aud" no contiene el valor esperado. Compartido entre las dos ramas. */
+    private static OAuth2TokenValidator<Jwt> audienceValidator(String expectedAudience) {
+        return jwt -> jwt.getAudience().contains(expectedAudience)
+                ? OAuth2TokenValidatorResult.success()
+                : OAuth2TokenValidatorResult.failure(new OAuth2Error(
+                    "invalid_token", "Audiencia no coincide con " + expectedAudience, null));
     }
 
     /** Lee el claim "iss" sin validar firma, solo para decidir la rama de validación. */
