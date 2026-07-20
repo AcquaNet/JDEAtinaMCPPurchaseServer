@@ -23,7 +23,6 @@ import org.springframework.security.oauth2.jwt.SupplierJwtDecoder;
 import org.springframework.security.web.SecurityFilterChain;
 
 import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 
@@ -123,9 +122,20 @@ public class SecurityConfig {
         // solo valida si el claim está presente. La vigencia real de la sesión la
         // controla el propio microservicio (claim sessionId) en cada llamada.
         return new SupplierJwtDecoder(() -> {
+            // ATINA_JWT_SECRET viaja en Base64 estándar (alfabeto +/, no el
+            // URL-safe -_): el microservicio la decodifica con
+            // javax.xml.bind.DatatypeConverter.parseBase64Binary(...), que es
+            // Base64 RFC 4648 clásico. Hay que replicar exactamente ese decoder
+            // o la clave HMAC resultante no coincide y la firma no valida.
+            byte[] keyBytes;
+            try {
+                keyBytes = Base64.getDecoder().decode(atinaJwtSecret);
+            } catch (IllegalArgumentException e) {
+                throw new BadJwtException(
+                        "ATINA_JWT_SECRET no es un valor Base64 válido.", e);
+            }
             NimbusJwtDecoder decoder = NimbusJwtDecoder
-                    .withSecretKey(new SecretKeySpec(
-                            atinaJwtSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"))
+                    .withSecretKey(new SecretKeySpec(keyBytes, "HmacSHA256"))
                     .macAlgorithm(MacAlgorithm.HS256)
                     .build();
             decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(List.of(

@@ -115,7 +115,7 @@ sequenceDiagram
 El server también acepta como Bearer los JWT **HS256** que emite el propio microservicio de Atina/Mulesoft en `/v1/login` (los mismos que viajan como `X-Approver-Token`). Cómo funciona:
 
 1. `SecurityConfig` mira el claim `iss` del token (sin validar todavía): si es la URL del realm de Keycloak → rama OIDC normal; si es el issuer de Atina (`jde.atina.jwt.issuer`, default `Issue`) → rama HS256.
-2. La rama HS256 **verifica la firma** con el secreto compartido (`ATINA_JWT_SECRET`, mínimo 32 bytes) — el mismo con el que firma el microservicio. Sin ese secreto configurado, los tokens de Atina se rechazan con un error claro y solo funciona Keycloak.
+2. La rama HS256 **verifica la firma** con el secreto compartido (`ATINA_JWT_SECRET`, mínimo 32 bytes una vez decodificado) — el mismo con el que firma el microservicio. El valor de la variable viaja en **Base64 estándar** (no URL-safe): el microservicio lo decodifica con `DatatypeConverter.parseBase64Binary(...)`, y este server replica exactamente ese decode (`Base64.getDecoder()`) antes de usarlo como clave HMAC — hay que configurar el string codificado tal cual lo entrega Atina, no el secreto crudo. Sin ese secreto configurado (o si no es Base64 válido), los tokens de Atina se rechazan con un error claro y solo funciona Keycloak.
 3. Un Bearer de Atina **ya es el token de sesión JDE**: `JdeAuthService` lo usa directamente como `X-Approver-Token` en cada llamada a Mulesoft. No pasa por el Identity Bridge ni por el vault (paso "0" en el orden de resolución, antes que el login manual y el bridge).
 4. Estos tokens no traen claim `exp`; la vigencia real la controla el microservicio (claim `sessionId`) en cada llamada.
 
