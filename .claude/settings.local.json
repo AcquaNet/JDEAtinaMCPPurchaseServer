@@ -44,7 +44,16 @@
       "Read(//private/tmp/**)",
       "Bash(mkdir -p jwtts_inspect)",
       "Bash(unzip -o -q /Users/franciscogodinoconte/.m2/repository/org/springframework/security/spring-security-oauth2-jose/6.5.6/spring-security-oauth2-jose-6.5.6.jar org/springframework/security/oauth2/jwt/JwtTimestampValidator.class -d /tmp/jwtts_inspect)",
-      "Bash(javap -p -c /tmp/jwtts_inspect/org/springframework/security/oauth2/jwt/JwtTimestampValidator.class)"
+      "Bash(javap -p -c /tmp/jwtts_inspect/org/springframework/security/oauth2/jwt/JwtTimestampValidator.class)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8080/mcp -X POST -H \"Content-Type: application/json\" -H \"Accept: application/json, text/event-stream\" -d '{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}')",
+      "Bash(awk '{print $2, $11, $12, $13, $14, $15, $16}')",
+      "Bash(osascript -e 'quit app \"Claude\"')",
+      "Bash(pkill -f mcp-remote)",
+      "Bash(awk '{print $2, $11, $12, $13}')",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/mcp -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{}')",
+      "Bash(echo \"server /mcp responde: $\\(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/mcp -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{}'\\) \\(401 = arriba y exigiendo auth, correcto\\)\")",
+      "Bash(bash -n ~/.claude/scripts/clean-claude-mcp-cache.sh)",
+      "Bash(~/.claude/scripts/clean-claude-mcp-cache.sh --help)"
     ]
   }
 }

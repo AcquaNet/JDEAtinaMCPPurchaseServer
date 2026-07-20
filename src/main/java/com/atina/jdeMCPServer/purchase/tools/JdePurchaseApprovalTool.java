@@ -1,11 +1,13 @@
 package com.atina.jdeMCPServer.purchase.tools;
 
+import com.atina.jdeMCPServer.auth.JdeAuthService;
 import com.atina.jdeMCPServer.purchase.services.JdePurchaseOrderClient;
 import com.atina.jdeMCPServer.security.RealmRoleGuard;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springaicommunity.mcp.annotation.McpResource;
 import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,16 +25,17 @@ public class JdePurchaseApprovalTool {
     private final ObjectMapper objectMapper;
     private final RealmRoleGuard roleGuard;
     private final String approverRole;
-
+    private final JdeAuthService authService;
 
     public JdePurchaseApprovalTool(JdePurchaseOrderClient jdeClient,
                                    ObjectMapper objectMapper,
                                    RealmRoleGuard roleGuard,
-                                   @Value("${jde.mcp.security.approver-role}") String approverRole) {
+                                   @Value("${jde.mcp.security.approver-role}") String approverRole, JdeAuthService authService) {
         this.jdeClient = jdeClient;
         this.objectMapper = objectMapper;
         this.roleGuard = roleGuard;
         this.approverRole = approverRole;
+        this.authService = authService;
     }
 
     // =========================
@@ -71,6 +74,7 @@ public class JdePurchaseApprovalTool {
             • highest amounts
             • any clear priority items for review 
         """)
+
     public String getPendingPurchaseOrders(
             @McpToolParam(
                     description = """
@@ -82,6 +86,10 @@ public class JdePurchaseApprovalTool {
     ) {
 
         int finalLimit = (limit != null && limit > 0) ? limit : 10;
+
+        // LOGIN:
+
+        authService.storeToken("eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJmYjRKaHFzY0liTk15d2hiX3dPNkdPWF9OYlNpaEpjMnllcjhSek03bjc0In0.eyJleHAiOjE3ODQ1ODQ0NjIsImlhdCI6MTc4NDU4NDE2MiwianRpIjoiNWIyMjQwNWYtMGU2NC00OWI5LTgyMjgtZjA4ZTBjMGY0MWE1IiwiaXNzIjoiaHR0cDovL2xvY2FsaG9zdDo4MTgwL3JlYWxtcy9qZGUtaW50ZWdyYXRpb24iLCJhdWQiOlsiYXRpbmEtbWNwLXNlcnZlciIsImFjY291bnQiXSwic3ViIjoiYWQyN2VkOGQtODQ5YS00ZjllLWE3OTMtMjE3YmIzODk5NmQ4IiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiYXRpbmEtbWNwLXNlcnZlciIsInNpZCI6ImM4YzIxYTVmLWFiNTMtNGMwZC1iYWNhLTlmNjA0ODVlMTgyMyIsImFjciI6IjEiLCJhbGxvd2VkLW9yaWdpbnMiOlsiaHR0cDovLzEyNy4wLjAuMToqIiwiaHR0cDovL2xvY2FsaG9zdDoqIiwiaHR0cHM6Ly9vYXV0aC5wc3Rtbi5pbyIsImh0dHBzOi8vbG9jYWxob3N0OioiXSwicmVhbG1fYWNjZXNzIjp7InJvbGVzIjpbIm9mZmxpbmVfYWNjZXNzIiwicHVyY2hhc2Utb3JkZXItYXBwcm92ZSIsInVtYV9hdXRob3JpemF0aW9uIiwiZGVmYXVsdC1yb2xlcy1qZGUtaW50ZWdyYXRpb24iXX0sInJlc291cmNlX2FjY2VzcyI6eyJhY2NvdW50Ijp7InJvbGVzIjpbIm1hbmFnZS1hY2NvdW50IiwibWFuYWdlLWFjY291bnQtbGlua3MiLCJ2aWV3LXByb2ZpbGUiXX19LCJzY29wZSI6ImF0aW5hX3Rva2VuIGVtYWlsIHByb2ZpbGUiLCJhdGluYV90b2tlbiI6ImV5SmhiR2NpT2lKSVV6STFOaUo5LmV5SnFkR2tpT2lJNE1qRTVPRFVpTENKcFlYUWlPakUzT0RRMU56VTVPRFFzSW5OMVlpSTZJbE4xWW1wbFkzUWlMQ0pwYzNNaU9pSkpjM04xWlNJc0luVnpaWElpT2lKS1JFVWlMQ0p3WVhOemQyOXlaQ0k2SW5GVE5HMWpRVmxaZGs1bmRHZDFiRU5OWlVWVVZFaDVlRVJ6VjFvelYwTXlPV2hHTTBsa1YyMW5NRkUyVEZGa2MzUkZRVDBpTENKbGJuWnBjbTl1YldWdWRDSTZJa3BFVmpreU1DSXNJbkp2YkdVaU9pSXFRVXhNSWl3aWMyVnpjMmx2Ymtsa0lqb3RNamt5TnpZMk56RTRmUS43YmZ4UHVyWFd1WTktQVJ6U0dKT1ZKaGRoZlVkUGw4QVo4Zmh4Y2F2YlE4IiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJKYXZpZXIgR29kaW5vIiwicHJlZmVycmVkX3VzZXJuYW1lIjoiamdvZGlubyIsImdpdmVuX25hbWUiOiJKYXZpZXIiLCJmYW1pbHlfbmFtZSI6IkdvZGlubyIsImVtYWlsIjoiamF2aWVyLmdvZGlub0BhY3F1YS5uZXQuYXIifQ.YJij0Wiogt44BeYZfiFaRUQslE1OMJsUISpZtpGA8RThUTe1CC_rwqswS1DpM-eFQehjB22qVFiITtjCJSf38Kue-oqiuDEDfdG5i2joC0q-hHJDugoqmboXNIQpwkbRmfsZAJywn-jrCc1m6wuvyUvBspZvqJKV6lEkIOMV29feO9U1S0fnZblnN8f3tyiOI3a3BsT0ESzYRGgti5mOPa8VWmlhN7NMmmN-DyksjMJcz-LxIfnMCeydjZ2lT6irSTskzvGi2H98lI2qw5T3pv3IcOgTjcof2yzOZ3rRvojDNVRD686obwJVlY1YZrnGzyUEPHRSKqWw8B4emFHwGQ");
 
         var orders = jdeClient.getPendingPurchaseOrders(limit);
 
