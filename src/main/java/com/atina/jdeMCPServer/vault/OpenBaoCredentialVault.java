@@ -12,16 +12,18 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
+import java.util.Optional;
 
 /**
- * Cliente de OpenBao (API KV v2). Lee la credencial JDE desde
- * {BAO_ADDR}/v1/secret/data/jde/{jdeUser}.
- *
- * El secret debe tener al menos el campo "password". El campo "user" es
- * opcional (por defecto se asume igual al nombre del path).
+ * Cliente de OpenBao (API KV v2). Lee dos tipos de secreto:
+ *  - la credencial JDE desde {BAO_ADDR}/v1/secret/data/jde/{jdeUser}
+ *    (campo obligatorio "password"; "user" opcional, default = nombre del path);
+ *  - el token de sesión JDE de Atina desde
+ *    {BAO_ADDR}/v1/secret/data/jde/atina/{sub} (campo "atina_token"), usado por
+ *    la etapa 2 (ver {@link AtinaSessionVault}).
  */
 @Service
-public class OpenBaoCredentialVault implements CredentialVault {
+public class OpenBaoCredentialVault implements CredentialVault, AtinaSessionVault {
 
     private static final Logger log = LoggerFactory.getLogger(OpenBaoCredentialVault.class);
 
@@ -85,6 +87,50 @@ public class OpenBaoCredentialVault implements CredentialVault {
         } catch (Exception e) {
             throw new VaultUnavailableException(
                     "Respuesta inesperada de OpenBao para secret/data/jde/" + jdeUser, e);
+        }
+    }
+
+    @Override
+    public Optional<String> getAtinaSessionToken(String key) {
+
+        if (baoToken == null || baoToken.isBlank()) {
+            throw new VaultUnavailableException(
+                    "BAO_TOKEN no está configurado en el entorno del MCP Server.");
+        }
+
+        String body;
+        try {
+            body = webClient.get()
+                    .uri(baoAddr + "/v1/secret/data/jde/atina/{key}", key)
+                    .header("X-Vault-Token", baoToken)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+        } catch (WebClientResponseException e) {
+            // 404 = no hay token guardado para esta clave: caso normal, se degrada
+            // al siguiente origen (claim) según jde.atina.session-source.
+            if (e.getStatusCode().value() == 404) {
+                return Optional.empty();
+            }
+            throw new VaultUnavailableException(
+                    "OpenBao respondió " + e.getStatusCode().value() +
+                            " al leer secret/data/jde/atina/" + key, e);
+        } catch (Exception e) {
+            throw new VaultUnavailableException(
+                    "No se pudo conectar a OpenBao en " + baoAddr, e);
+        }
+
+        try {
+            JsonNode data = objectMapper.readTree(body).path("data").path("data");
+            String token = data.path("atina_token").asText(null);
+            if (token == null || token.isBlank()) {
+                return Optional.empty();
+            }
+            log.debug("Token de sesión Atina obtenido del vault para clave [{}]", key);
+            return Optional.of(token);
+        } catch (Exception e) {
+            throw new VaultUnavailableException(
+                    "Respuesta inesperada de OpenBao para secret/data/jde/atina/" + key, e);
         }
     }
 }

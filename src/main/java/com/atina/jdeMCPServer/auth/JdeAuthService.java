@@ -4,13 +4,18 @@ import com.atina.jdeMCPServer.identity.IdentityResolver;
 import com.atina.jdeMCPServer.identity.JdeIdentity;
 import com.atina.jdeMCPServer.identity.UnmappedIdentityException;
 import com.atina.jdeMCPServer.security.AuthenticatedJdeIdentity;
+import com.atina.jdeMCPServer.vault.AtinaSessionVault;
+import com.atina.jdeMCPServer.vault.VaultUnavailableException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+
+import java.util.Optional;
 
 @Service
 public class JdeAuthService {
@@ -20,19 +25,34 @@ public class JdeAuthService {
     /** Atributo de request: usuario JDE resuelto por el Identity Bridge en esta request. */
     private static final String BRIDGE_USER_ATTR = "jde.bridge.user";
 
+    /**
+     * Atributo de request: marca que el token de esta request salió de la
+     * estrategia de Atina (claim o vault). updateTokenFromResponse lo usa para
+     * NO intentar refrescar (no hay dónde reinyectar un token renovado), sin
+     * tener que re-consultar el claim ni —peor— re-pegarle al vault.
+     */
+    private static final String ATINA_STRATEGY_ATTR = "jde.atina.strategyToken";
+
     private final JdeTokenStore tokenStore;
     private final AuthenticatedJdeIdentity authenticatedIdentity;
     private final IdentityResolver identityResolver;
     private final JdeSessionCache sessionCache;
+    private final AtinaSessionVault atinaSessionVault;
+    private final AtinaSessionSource atinaSessionSource;
 
     public JdeAuthService(JdeTokenStore tokenStore,
                           AuthenticatedJdeIdentity authenticatedIdentity,
                           IdentityResolver identityResolver,
-                          JdeSessionCache sessionCache) {
+                          JdeSessionCache sessionCache,
+                          AtinaSessionVault atinaSessionVault,
+                          @Value("${jde.atina.session-source:claim}") String atinaSessionSource) {
         this.tokenStore = tokenStore;
         this.authenticatedIdentity = authenticatedIdentity;
         this.identityResolver = identityResolver;
         this.sessionCache = sessionCache;
+        this.atinaSessionVault = atinaSessionVault;
+        this.atinaSessionSource = AtinaSessionSource.parse(atinaSessionSource);
+        log.info("Fuente del token de sesión Atina (jde.atina.session-source): {}", this.atinaSessionSource);
     }
 
     // ---------------------------------------------------------------
@@ -62,13 +82,15 @@ public class JdeAuthService {
             return atinaToken.get();
         }
 
-        // 0.b Token de sesión JDE incrustado por Keycloak en el claim "atina_token":
-        //     el usuario se autenticó con Keycloak, pero el JWT trae la sesión JDE
-        //     emitida por Atina como un claim. Se usa directo como X-Approver-Token,
-        //     sin Identity Bridge ni vault (misma semántica que 0, distinta fuente).
-        var atinaClaim = authenticatedIdentity.currentAtinaTokenClaim();
-        if (atinaClaim.isPresent()) {
-            return atinaClaim.get();
+        // 0.b Token de sesión JDE de Atina para un usuario autenticado con Keycloak.
+        //     Puede venir del claim "atina_token" del JWT (etapa 1) o de OpenBao
+        //     (etapa 2); jde.atina.session-source define cuál se usa y en qué orden.
+        //     Se usa directo como X-Approver-Token, sin Identity Bridge ni login.
+        var atinaSession = resolveAtinaSessionToken();
+        if (atinaSession.isPresent()) {
+            currentRequestAttributes().setAttribute(
+                    ATINA_STRATEGY_ATTR, Boolean.TRUE, RequestAttributes.SCOPE_REQUEST);
+            return atinaSession.get();
         }
 
         // 1. Login manual previo (tool jde_login) para esta sesión MCP
@@ -98,6 +120,51 @@ public class JdeAuthService {
             throw new JdeSessionNotFoundException(
                     "Sesión JDE no encontrada para esta sesión. " +
                             "Por favor autentícate usando el tool 'jde_login' con tu usuario y contraseña JDE.");
+        }
+    }
+
+    /**
+     * Resuelve el token de sesión JDE de Atina según jde.atina.session-source,
+     * haciendo convivir el claim del JWT (etapa 1) y el guardado en OpenBao
+     * (etapa 2). En los modos con fallback, si el vault está caído se degrada
+     * al claim en vez de romper la operación.
+     */
+    private Optional<String> resolveAtinaSessionToken() {
+        return switch (atinaSessionSource) {
+            case CLAIM -> atinaTokenFromClaim();
+            case VAULT -> atinaTokenFromVault();
+            case CLAIM_THEN_VAULT -> {
+                Optional<String> fromClaim = atinaTokenFromClaim();
+                yield fromClaim.isPresent() ? fromClaim : atinaTokenFromVault();
+            }
+            case VAULT_THEN_CLAIM -> {
+                Optional<String> fromVault = atinaTokenFromVaultSafe();
+                yield fromVault.isPresent() ? fromVault : atinaTokenFromClaim();
+            }
+        };
+    }
+
+    /** Etapa 1: token en el claim "atina_token" del JWT de Keycloak. */
+    private Optional<String> atinaTokenFromClaim() {
+        return authenticatedIdentity.currentAtinaTokenClaim();
+    }
+
+    /** Etapa 2: token guardado en OpenBao, keyed por el sub de Keycloak. */
+    private Optional<String> atinaTokenFromVault() {
+        return atinaSessionVault.getAtinaSessionToken(authenticatedIdentity.currentSubject());
+    }
+
+    /**
+     * Como {@link #atinaTokenFromVault()} pero degrada a vacío si el vault no
+     * está disponible, para permitir el fallback al claim en modo VAULT_THEN_CLAIM.
+     */
+    private Optional<String> atinaTokenFromVaultSafe() {
+        try {
+            return atinaTokenFromVault();
+        } catch (VaultUnavailableException e) {
+            log.warn("OpenBao no disponible al resolver atina_token; se intenta el claim. {}",
+                    e.getMessage());
+            return Optional.empty();
         }
     }
 
@@ -135,11 +202,15 @@ public class JdeAuthService {
         if (newToken == null || newToken.isBlank()) {
             return;
         }
-        // Token de Atina (bearer directo o claim "atina_token" del JWT de Keycloak):
-        // la sesión JDE la controla Atina/Keycloak, no la almacenamos ni refrescamos
-        // de nuestro lado (no hay dónde reinyectar un token renovado).
-        if (authenticatedIdentity.currentAtinaSessionToken().isPresent()
-                || authenticatedIdentity.currentAtinaTokenClaim().isPresent()) {
+        // Token de Atina (bearer directo, o resuelto por la estrategia claim/vault):
+        // la sesión JDE la controla Atina/Keycloak/vault, no la almacenamos ni
+        // refrescamos de nuestro lado (no hay dónde reinyectar un token renovado).
+        if (authenticatedIdentity.currentAtinaSessionToken().isPresent()) {
+            return;
+        }
+        Object atinaStrategy = currentRequestAttributes().getAttribute(
+                ATINA_STRATEGY_ATTR, RequestAttributes.SCOPE_REQUEST);
+        if (Boolean.TRUE.equals(atinaStrategy)) {
             return;
         }
         Object bridgeUser = currentRequestAttributes().getAttribute(

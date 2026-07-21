@@ -14,10 +14,10 @@ El servidor maneja **dos autenticaciones distintas que no se mezclan**. Entender
 | **Token** | JWT de Keycloak | JWT de Mulesoft/JDE |
 | **Viaja en el header** | `Authorization: Bearer <jwt>` | `X-Approver-Token: <jwt>` |
 | **Quién lo valida** | Spring Security (este servidor) | Mulesoft / JDE |
-| **Cómo se obtiene** | Flujo OAuth2 contra Keycloak | Identity Bridge (automático, para usuarios mapeados) o tool `jde_login` (fallback manual) |
-| **Dónde se guarda** | No se guarda (viene en cada request) | `JdeTokenStore` (en memoria, por sesión MCP) |
+| **Cómo se obtiene** | Flujo OAuth2 contra Keycloak | Token de Atina (claim del JWT de Keycloak u OpenBao), Identity Bridge (automático), o tool `jde_login` (fallback manual) |
+| **Dónde se guarda** | No se guarda (viene en cada request) | `JdeTokenStore` (en memoria, por sesión MCP); el token de Atina no se guarda (viene en el JWT o se lee del vault en cada request) |
 
-> ⚠️ **Importante**: el header `Authorization` ya **no** se usa como token JDE. Antes de la migración, el servidor tomaba el Bearer del header y lo reenviaba a Mulesoft como `X-Approver-Token`. Eso ya no existe: el Bearer de Keycloak solo sirve para entrar al endpoint `/mcp`; el token JDE se obtiene únicamente con `jde_login`.
+> ⚠️ **Importante**: el header `Authorization` **no** se reenvía como token JDE. Antes de la migración, el servidor tomaba el Bearer del header y lo mandaba a Mulesoft como `X-Approver-Token`. Eso ya no existe: el Bearer de Keycloak solo sirve para entrar al endpoint `/mcp`. El token JDE (`X-Approver-Token`) sale de otra fuente, resuelta en `JdeAuthService.getOrCreateToken()`: un Bearer de Atina, el **claim `atina_token`** del JWT de Keycloak, **OpenBao**, el **Identity Bridge**, o un `jde_login` manual — nunca del header `Authorization` crudo. Ver [El token de sesión de Atina](#el-token-de-sesión-de-atina-claim-del-jwt-u-openbao).
 
 ### Vista completa
 
@@ -229,6 +229,58 @@ jde_login ──► token guardado ──► se usa en cada tool ──► Mules
 
 ---
 
+## El token de sesión de Atina: claim del JWT u OpenBao
+
+Cuando un usuario entra por **Keycloak**, su sesión JDE puede venir **ya emitida por Atina** — el server no necesita loguear contra Mulesoft ni pasar por el Identity Bridge, porque el token de Atina **ya es** el `X-Approver-Token`. Ese token puede llegar por dos vías que **conviven**, elegidas con la property `jde.atina.session-source`:
+
+| Etapa | Fuente | De dónde sale | Lo lee |
+|---|---|---|---|
+| **Etapa 1** | Claim del JWT | El JWT de Keycloak trae el token en el claim `atina_token` | `AuthenticatedJdeIdentity.currentAtinaTokenClaim()` |
+| **Etapa 2** | OpenBao | Secreto en `secret/data/jde/atina/{sub}`, campo `atina_token` | `AtinaSessionVault.getAtinaSessionToken(sub)` (impl `OpenBaoCredentialVault`) |
+
+> **Ojo, no confundir con el Bearer de Atina** (sección [Alternativa a Keycloak](#alternativa-a-keycloak-tokens-del-microservicio-de-atina)): ahí el token de sesión JDE **es el Bearer completo** (issuer Atina, HS256). Acá el Bearer es de **Keycloak** y el token JDE viaja como un **claim más** dentro de ese JWT (etapa 1) o guardado en el **vault** (etapa 2).
+
+### La property `jde.atina.session-source`
+
+Define qué fuente se usa y en qué orden. Default `claim`, que preserva el comportamiento de la etapa 1 (no rompe nada):
+
+| Valor | Comportamiento |
+|---|---|
+| `claim` | Solo el claim `atina_token` del JWT (etapa 1) |
+| `vault` | Solo el token de OpenBao `secret/data/jde/atina/{sub}` (etapa 2) |
+| `claim-then-vault` | Primero el claim; si no está, OpenBao |
+| `vault-then-claim` | Primero OpenBao; si no está **(o el vault se cae)**, el claim |
+
+En los modos con fallback, si OpenBao no responde el server **degrada al claim** en lugar de romper la operación (solo en `vault-then-claim`; se loguea un `WARN`). El nombre del claim es configurable con `jde.atina.token-claim` (default `atina_token`).
+
+### Dónde encaja en el orden de resolución
+
+`JdeAuthService.getOrCreateToken()` resuelve el `X-Approver-Token` en este orden:
+
+```
+0.   Bearer con issuer Atina (HS256)        → el Bearer ES el token JDE
+0.b  Token de sesión de Atina               → claim y/o OpenBao, según jde.atina.session-source
+1.   jde_login manual (por Mcp-Session-Id)  → fallback explícito
+2.   Identity Bridge (sub → OpenBao → login)→ automático para usuarios mapeados
+```
+
+El paso 0.b va **antes** del login manual y del Identity Bridge: si hay token de Atina (por claim o vault), se usa y no se toca ni el vault de credenciales ni Mulesoft `/v1/login`.
+
+### Detalles importantes
+
+- **Keyed por el `sub` de Keycloak.** El token del vault (etapa 2) no depende de `identity_mapping`: se guarda y se busca por el `sub` del usuario autenticado.
+- **No se refresca de nuestro lado.** Un token resuelto por esta estrategia lo controla Atina/Keycloak/vault; si Mulesoft devuelve un `X-Approver-Token` renovado, **no** se almacena (no hay dónde reinyectarlo). Se marca la request con un atributo interno para no re-consultar el claim ni —peor— re-pegarle al vault.
+- **Etapa 1 requiere un mapper en Keycloak.** Para que el claim `atina_token` viaje, el client `atina-mcp-server` debe tener un *protocol mapper* que lo emita (típicamente *User Attribute → Token Claim*, "Add to access token" ON). Sin ese mapper, el claim no llega y se cae al siguiente origen.
+- **Sembrar el token en OpenBao (etapa 2), para probar.** El alta es manual (el server solo lee); quién lo escribe en producción es una decisión abierta (recomendado: que Atina lo pushee out-of-band):
+
+  ```bash
+  curl -sf -X POST "$BAO_ADDR/v1/secret/data/jde/atina/<keycloak_sub>" \
+    -H "X-Vault-Token: $BAO_TOKEN" -H "Content-Type: application/json" \
+    -d '{"data":{"atina_token":"<jwt sesión JDE>"}}'
+  ```
+
+---
+
 ## El Identity Bridge: las dos capas conectadas
 
 El bridge traduce el `sub` de Keycloak en una sesión JDE automática, **eliminando el `jde_login` manual** para los usuarios mapeados. Flujo dentro de `JdeAuthService.getOrCreateToken()`:
@@ -251,6 +303,7 @@ JdeAuthClient.login(user, pass, env, role) → JWT JDE → cacheado y usado
 ```
 
 Reglas de resolución:
+0. Un **token de sesión de Atina** (Bearer HS256, claim `atina_token` o OpenBao) gana sobre todo lo demás: si existe, el bridge ni se ejecuta (ver [El token de sesión de Atina](#el-token-de-sesión-de-atina-claim-del-jwt-u-openbao)).
 1. Un `jde_login` **manual** previo para la sesión MCP gana sobre el bridge.
 2. Si el `sub` no tiene fila en `identity_mapping` → error claro: *"tu usuario no tiene un JDE asociado todavía"* (con `jde_login` como alternativa) — no un 500.
 3. El cache es por `jde_user`: dos usuarios Keycloak mapeados al mismo `jde_user` comparten sesión JDE. Renovación proactiva si el JWT expira en <60s.
@@ -271,6 +324,8 @@ En `src/main/resources/application.properties`:
 |---|---|---|
 | `spring.security.oauth2.resourceserver.jwt.issuer-uri` | `http://localhost:8180/realms/jde-integration` | Contra qué Keycloak/realm se validan los tokens (Capa 1) |
 | `jde.mcp.security.expected-audience` | `atina-mcp-server` | Audiencia (`aud`) exigida en los tokens (Capa 1) |
+| `jde.atina.session-source` | `claim` | Fuente del token de sesión de Atina: `claim` \| `vault` \| `claim-then-vault` \| `vault-then-claim` (Capa 2) |
+| `jde.atina.token-claim` | `atina_token` | Nombre del claim del JWT de Keycloak que trae el token JDE (etapa 1) |
 | `jde.api.base-url` | `http://localhost:8085/api` | Mulesoft para login y compras (Capa 2) |
 | `jde.so.api.base-url` | `http://localhost:8085/api` | Mulesoft para sales orders (Capa 2) |
 | `jde.api.login-timeout-minutes` | `5` | Timeout del request de login (Capa 2) |
@@ -279,5 +334,6 @@ En `src/main/resources/application.properties`:
 
 Código involucrado:
 
-- **Capa 1**: `security/SecurityConfig.java` (filtro + validadores), `security/AuthenticatedJdeIdentity.java` (identidad del request).
-- **Capa 2**: `auth/JdeAuthClient.java` (login contra Mulesoft), `auth/JdeAuthService.java` (resolución de sesión), `auth/JdeTokenStore.java` (almacenamiento y expiración), `purchase/tools/JdeLoginTool.java` (el tool `jde_login`).
+- **Capa 1**: `security/SecurityConfig.java` (filtro + validadores + decoder dual Keycloak/Atina), `security/AuthenticatedJdeIdentity.java` (identidad del request; expone `currentAtinaSessionToken()` y `currentAtinaTokenClaim()`).
+- **Capa 2**: `auth/JdeAuthClient.java` (login contra Mulesoft), `auth/JdeAuthService.java` (resolución de sesión y estrategia del token de Atina), `auth/JdeTokenStore.java` (almacenamiento y expiración), `purchase/tools/JdeLoginTool.java` (el tool `jde_login`).
+- **Token de sesión de Atina**: `auth/AtinaSessionSource.java` (enum de la property), `vault/AtinaSessionVault.java` (interfaz de lectura del vault) + `vault/OpenBaoCredentialVault.java` (impl OpenBao, etapa 2).
