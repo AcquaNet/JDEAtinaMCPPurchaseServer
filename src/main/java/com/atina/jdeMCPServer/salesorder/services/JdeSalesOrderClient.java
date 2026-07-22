@@ -39,12 +39,14 @@ public class JdeSalesOrderClient {
     private final JdeAuthService authService;
     private final String baseUrl;
     private final String gatewayBaseUrl;
+    private final String gatewayTransactionId;
 
     public JdeSalesOrderClient(
             JdeAuthService authService,
             @Value("${jde.so.api.base-url}") String baseUrl,
             @Value("${jde.atina.gateway.base-url}") String gatewayBaseUrl,
-            @Value("${jde.atina.gateway.timeout-minutes:10}") int gatewayTimeoutMinutes) {
+            @Value("${jde.atina.gateway.timeout-minutes:10}") int gatewayTimeoutMinutes,
+            @Value("${jde.atina.gateway.transaction-id:0}") String gatewayTransactionId) {
 
         this.webClient = WebClient.builder().clientConnector(new ReactorClientHttpConnector(
                 HttpClient.create().responseTimeout(Duration.ofMinutes(10))
@@ -55,6 +57,7 @@ public class JdeSalesOrderClient {
         this.authService = authService;
         this.baseUrl = baseUrl;
         this.gatewayBaseUrl = gatewayBaseUrl;
+        this.gatewayTransactionId = gatewayTransactionId;
     }
 
     public String getCustomerCreditFinancialInfo(int customerNumber) {
@@ -226,7 +229,7 @@ public class JdeSalesOrderClient {
                 .uri(gatewayBaseUrl + "/v1/operations/execute")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .header("Token", "null")
-                .header("TransactionId", "0")
+                .header("TransactionId", gatewayTransactionId)
                 .accept(MediaType.APPLICATION_JSON)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
