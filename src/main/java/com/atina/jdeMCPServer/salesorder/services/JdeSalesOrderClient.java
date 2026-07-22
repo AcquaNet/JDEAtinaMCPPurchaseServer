@@ -27,6 +27,12 @@ public class JdeSalesOrderClient {
             "oracle.e1.bssv.JP010000.AddressBookManager.lookupAddressBook";
     private static final String OP_GET_CUSTOMER =
             "oracle.e1.bssv.JP010020.CustomerManager.getCustomerV3";
+    private static final String OP_ITEM_SEARCH =
+            "oracle.e1.bssv.JP410000.InventoryManager.getItemSearch";
+    private static final String OP_GET_ITEM_PRICE_AVAILABILITY =
+            "oracle.e1.bssv.JP420000.SalesOrderManager.getItemPriceAndAvailabilityV3";
+    private static final String OP_GET_CUSTOMER_ITEM_PRICE =
+            "oracle.e1.bssv.JP420000.SalesOrderManager.getCustomerItemPrice";
 
     private final WebClient webClient;
     private final WebClient gatewayWebClient;
@@ -112,6 +118,92 @@ public class JdeSalesOrderClient {
         value.put("entity", entity);
 
         return executeGatewayOperation(OP_GET_CUSTOMER, value);
+    }
+
+    /**
+     * Búsqueda de artículos por nombre (o fragmento de nombre): devuelve los
+     * itemId candidatos que luego consume el precio/disponibilidad.
+     */
+    public String searchItems(String itemSearchText) {
+
+        log.info("Gateway item search for text '{}'", itemSearchText);
+
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("itemSearchText", itemSearchText);
+
+        return executeGatewayOperation(OP_ITEM_SEARCH, value);
+    }
+
+    /**
+     * Precio y disponibilidad por almacén de un artículo para un cliente
+     * (operación BSSV getItemPriceAndAvailabilityV3).
+     */
+    public String getItemPriceAndAvailability(int itemId, String businessUnit, int entityId,
+                                               String currencyCode, Number quantity,
+                                               String unitOfMeasure, String processingVersion) {
+
+        log.info("Gateway item price+availability for itemId {} / entityId {}", itemId, entityId);
+
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("itemId", itemId);
+
+        Map<String, Object> product = new LinkedHashMap<>();
+        product.put("item", item);
+        product.put("quantityOrdered", quantity);
+        product.put("unitOfMeasureCodeTransaction", unitOfMeasure);
+
+        Map<String, Object> customer = new LinkedHashMap<>();
+        customer.put("entityId", entityId);
+
+        Map<String, Object> processing = new LinkedHashMap<>();
+        processing.put("processingVersion", processingVersion);
+
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("product", product);
+        value.put("businessUnit", businessUnit);
+        value.put("customer", customer);
+        value.put("currencyCode", currencyCode);
+        value.put("processing", processing);
+
+        return executeGatewayOperation(OP_GET_ITEM_PRICE_AVAILABILITY, value);
+    }
+
+    /**
+     * Precio de un artículo para un cliente, sin disponibilidad (operación
+     * BSSV getCustomerItemPrice).
+     */
+    public String getCustomerItemPrice(int itemId, String businessUnit, int entityId,
+                                        String currencyCode, Number quantity,
+                                        String unitOfMeasure, String processingVersion) {
+
+        log.info("Gateway customer item price for itemId {} / entityId {}", itemId, entityId);
+
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("itemId", itemId);
+
+        Map<String, Object> product = new LinkedHashMap<>();
+        product.put("item", item);
+        product.put("businessUnit", businessUnit);
+
+        Map<String, Object> shipTo = new LinkedHashMap<>();
+        shipTo.put("entityId", entityId);
+
+        Map<String, Object> customer = new LinkedHashMap<>();
+        customer.put("shipTo", shipTo);
+
+        Map<String, Object> processing = new LinkedHashMap<>();
+        processing.put("processingVersion", processingVersion);
+
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("product", product);
+        value.put("transactionQuantity", quantity);
+        value.put("unitOfMeasureCodeTransaction", unitOfMeasure);
+        value.put("currencyCode", currencyCode);
+        value.put("customer", customer);
+        value.put("businessUnit", businessUnit);
+        value.put("processing", processing);
+
+        return executeGatewayOperation(OP_GET_CUSTOMER_ITEM_PRICE, value);
     }
 
     /**
