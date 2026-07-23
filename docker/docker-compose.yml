@@ -1,9 +1,28 @@
+# Profiles (Docker Compose --profile), uno por ambiente de la app (mismos nombres
+# que spring.profiles.active: dev | stage | prod):
+#   dev   -> keycloak + openbao + mcp-server (SPRING_PROFILES_ACTIVE=dev). Uso normal:
+#            correr el MCP Server desde el IDE contra este keycloak/openbao (como hoy);
+#            el servicio mcp-server de este compose es para probar la imagen Docker
+#            localmente, no reemplaza al IDE.
+#   stage -> keycloak + openbao + mcp-server (SPRING_PROFILES_ACTIVE=stage). Sin Caddy
+#            todavia (no hay dominio publico para stage) -- se expone solo por puerto,
+#            para pruebas internas.
+#   prod  -> keycloak + openbao + mcp-server + caddy. Caddy es el unico servicio con
+#            puertos 80/443 publicos; obtiene el certificado HTTPS de Let's Encrypt
+#            automaticamente (ver caddy/Caddyfile.prod). Todo lo demas queda atado a
+#            127.0.0.1 (no accesible desde internet, solo via SSH tunnel para admin).
+#
+# Uso:
+#   docker compose --profile dev up -d
+#   docker compose --profile stage --env-file .env.stage up -d
+#   docker compose --profile prod  --env-file .env.prod  up -d
 
 services:
   keycloak-db:
     image: postgres:16
     container_name: keycloak-db
     restart: unless-stopped
+    profiles: ["dev", "stage", "prod"]
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
@@ -17,7 +36,13 @@ services:
     image: quay.io/keycloak/keycloak:26.0
     container_name: keycloak
     restart: unless-stopped
-    command: start-dev
+    profiles: ["dev", "stage", "prod"]
+    # --import-realm: si el realm "jde-integration" no existe todavia en la data
+    # persistida (volumen keycloak_data), lo crea a partir del JSON montado abajo.
+    # Ver docker/keycloak/export-realm.sh para regenerar ese JSON con cambios hechos
+    # a mano en la consola admin -- asi no hay que reconfigurar Keycloak desde cero
+    # cada vez que se recrea el contenedor o se clona el ambiente.
+    command: start-dev --import-realm
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
@@ -25,10 +50,21 @@ services:
       KC_DB_PASSWORD: ${KC_DB_PASSWORD:-changeme_db_password}
       KEYCLOAK_ADMIN: ${KC_ADMIN_USER:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:-changeme_admin_password}
-      # En produccion (Azure VM), reemplazar start-dev por start
-      # y setear KC_HOSTNAME al dominio/IP real + KC_PROXY=edge si hay reverse proxy
+      # dev/stage: localhost (sin Caddy). prod: dominio publico HTTPS (detras de Caddy),
+      # con KC_PROXY_HEADERS para que Keycloak confie en X-Forwarded-* de Caddy.
+      KC_HOSTNAME: ${KC_HOSTNAME:-http://localhost:8180}
+      KC_PROXY_HEADERS: ${KC_PROXY_HEADERS:-}
+      KC_HTTP_ENABLED: "true"
+      # En produccion (droplet DO), start-dev sigue siendo aceptable mientras el
+      # volumen keycloak_data persista los datos entre reinicios (no es in-memory).
+      # Migrar a "start" + KC_HOSTNAME_STRICT cuando el realm este estable.
     ports:
-      - "8180:8080"
+      # Solo accesible desde el propio droplet (SSH tunnel) o desde el host en dev/stage.
+      # El trafico publico entra por Caddy -> keycloak:8080 (red interna), nunca por acá.
+      - "127.0.0.1:${KC_PORT:-8180}:8080"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - keycloak_data:/opt/keycloak/data
     depends_on:
       - keycloak-db
     networks:
@@ -38,13 +74,15 @@ services:
     image: openbao/openbao:2.5.0
     container_name: openbao
     restart: unless-stopped
+    profiles: ["dev", "stage", "prod"]
     cap_add:
       - IPC_LOCK
     ports:
-      - "8200:8200"
+      # Igual que Keycloak: solo localhost del droplet, nunca publico.
+      - "127.0.0.1:${BAO_PORT:-8200}:8200"
     environment:
       # Modo dev: mismo criterio que start-dev en Keycloak.
-      # Migrar a modo server (file/raft storage) junto con el pase a la VM de Azure.
+      # Migrar a modo server (file/raft storage) junto con el pase a la VM/droplet definitiva.
       BAO_DEV_ROOT_TOKEN_ID: "${OPENBAO_ROOT_TOKEN:-dev-only-root-token}"
       BAO_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
       BAO_ADDR: "http://0.0.0.0:8200"
@@ -56,11 +94,74 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - jde-auth-net
+
+  mcp-server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ${MCP_IMAGE:-jde-mcp-server:latest}
+    container_name: jde-mcp-server
+    restart: unless-stopped
+    profiles: ["dev", "stage", "prod"]
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # dev/stage: sin fallback util adentro del contenedor -- "localhost" ahi es el
+      # propio contenedor, no el host ni sus hermanos. Para dev containerizado, apuntar
+      # estos dos a los servicios de este mismo compose (ver .env: valores por defecto
+      # ya son http://keycloak:8080 / http://openbao:8200). El flujo normal de dev sigue
+      # siendo correr el jar desde el IDE (ahi "localhost" es correcto) -- este servicio
+      # es para probar la imagen Docker en si.
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: ${MCP_KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/jde-integration}
+      BAO_ADDR: ${BAO_ADDR:-http://openbao:8200}
+      BAO_TOKEN: ${BAO_TOKEN:-dev-only-root-token}
+      ATINA_JWT_SECRET: ${ATINA_JWT_SECRET:-}
+      # Mulesoft y el Gateway de Atina NO son parte de este compose (corren en otro
+      # host/servicio). host.docker.internal + extra_hosts (abajo) resuelve al host
+      # Docker si Mulesoft/Gateway corren en la misma maquina que este compose.
+      JDE_API_BASE_URL: ${JDE_MULESOFT_BASE_URL:-http://host.docker.internal:8089/api}
+      JDE_SO_API_BASE_URL: ${JDE_MULESOFT_BASE_URL:-http://host.docker.internal:8089/api}
+      JDE_ATINA_GATEWAY_BASE_URL: ${JDE_ATINA_GATEWAY_BASE_URL:-http://host.docker.internal:8086}
+    extra_hosts:
+      # host.docker.internal ya funciona nativo en Docker Desktop (Mac/Windows);
+      # en Linux hace falta este mapeo explicito.
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Publico solo en prod, y ahi solo a traves de Caddy (ver Caddyfile.prod).
+      # Mapeado a 127.0.0.1 para permitir pruebas locales/SSH-tunnel sin exponerlo directo.
+      - "127.0.0.1:${MCP_SERVER_PORT:-8080}:8080"
+    volumes:
+      - mcp_server_data:/app/data
+    depends_on:
+      - keycloak
+      - openbao
+    networks:
+      - jde-auth-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: jde-mcp-caddy
+    restart: unless-stopped
+    profiles: ["prod"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - jde-auth-net
 
 networks:
   jde-auth-net:
     driver: bridge
 
 volumes:
-  keycloak_db_data: 
+  keycloak_db_data:
+  keycloak_data:
   openbao_data:
+  mcp_server_data:
+  caddy_data:
+  caddy_config:

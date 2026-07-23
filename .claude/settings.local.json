@@ -83,7 +83,20 @@
       "Bash(curl -s \"https://raw.githubusercontent.com/geelen/mcp-remote/v0.1.37/README.md\")",
       "Bash(curl -s \"https://api.github.com/repos/geelen/mcp-remote/git/trees/v0.1.37?recursive=1\")",
       "Bash(curl -s \"https://raw.githubusercontent.com/geelen/mcp-remote/v0.1.37/src/proxy.ts\")",
-      "Bash(curl -s \"https://raw.githubusercontent.com/geelen/mcp-remote/v0.1.37/src/lib/utils.ts\")"
+      "Bash(curl -s \"https://raw.githubusercontent.com/geelen/mcp-remote/v0.1.37/src/lib/utils.ts\")",
+      "Read(//Users/franciscogodinoconte/**)",
+      "Bash(find / -maxdepth 4 -iname \"*ATINA-PDF*\")",
+      "WebFetch(domain:hub.docker.com)",
+      "Bash(docker version *)",
+      "Bash(docker build *)",
+      "Bash(docker run *)",
+      "Bash(curl -s http://localhost:18098/.well-known/oauth-protected-resource)",
+      "Bash(docker stop *)",
+      "Bash(docker rm *)",
+      "Bash(docker rmi *)",
+      "Bash(grep -q \"^keycloak$\")",
+      "Bash(KC_DB_PASSWORD=changeme_db_password ./export-realm.sh)",
+      "Bash(docker compose *)"
     ]
   }
 }

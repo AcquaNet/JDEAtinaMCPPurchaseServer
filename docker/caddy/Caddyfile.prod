@@ -1,0 +1,13 @@
+# Caddy obtiene y renueva los certificados de Let's Encrypt automaticamente para
+# cualquier site block con un dominio publico real (sin necesidad de directiva "tls"
+# ni configurar email/ACME a mano) -- basta con que el dominio resuelva a este droplet
+# y los puertos 80/443 esten abiertos. Los certificados persisten en el volumen
+# caddy_data entre reinicios del contenedor.
+
+jdemcp-atina-connection.com {
+	reverse_proxy mcp-server:8080
+}
+
+auth.jdemcp-atina-connection.com {
+	reverse_proxy keycloak:8080
+}

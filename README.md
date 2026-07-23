@@ -15,6 +15,7 @@ A Model Context Protocol (MCP) server that exposes JD Edwards (JDE) purchase ord
   - [Adding the MCP Server to Claude Desktop](#adding-the-mcp-server-to-claude-desktop)
 - [Testing with MCP Inspector](#testing-with-mcp-inspector)
 - [Testing guide (OAuth 2.1): TESTING.md](TESTING.md)
+- [Deployment guide (Docker local + Digital Ocean): DEPLOYMENT.md](DEPLOYMENT.md)
 - [Authentication](#authentication)
 - [Token validation & authorization (roles/scopes): AUTHORIZATION.md](AUTHORIZATION.md)
 - [OpenBao (Credential Vault)](#openbao-credential-vault)
@@ -625,7 +626,13 @@ Claude:  [calls jde_login if needed, then jde_get_customer_credit_info]
 
 ## Production Checklist
 
-Everything below runs in **dev mode** today. Before moving to the Azure VM:
+> For the actual step-by-step deployment (Docker local and Digital Ocean, with the
+> real `jdemcp-atina-connection.com` domain), see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+> The checklist below is an older list of hardening items (originally written with
+> an Azure VM in mind); cross-check it against DEPLOYMENT.md since some items may
+> already be covered there (e.g. Keycloak `start-dev`/`KC_HOSTNAME`/redirect URIs).
+
+Everything below runs in **dev mode** today. Before moving off dev mode:
 
 ### Keycloak
 

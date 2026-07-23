@@ -34,3 +34,10 @@ build/
 
 ### H2 identity-mapping DB ###
 /data/
+
+### Docker deploy secrets (docker/.env es el unico con placeholders committeable) ###
+docker/.env.stage
+docker/.env.prod
+docker/deploy.env
+docker/caddy/data/
+docker/caddy/config/

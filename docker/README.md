@@ -1,55 +1,49 @@
-# Keycloak para JDE MCP Server — Caso 1 (Claude Desktop)
+# Docker: Keycloak + OpenBao + MCP Server + Caddy
 
-## 1. Levantar Keycloak
+Stack de infraestructura para el JDE MCP Server: Keycloak (OAuth2), OpenBao (vault de
+credenciales JDE), el propio MCP Server, y Caddy (reverse proxy + HTTPS automático en
+producción).
+
+> **Guía paso a paso de despliegue** (local con Docker y en Digital Ocean): ver
+> **[../DEPLOYMENT.md](../DEPLOYMENT.md)**. Este archivo es solo referencia rápida de
+> qué hay en esta carpeta.
+
+## Contenido de la carpeta
+
+| Archivo/carpeta | Qué es |
+|---|---|
+| `docker-compose.yml` | Los 3 profiles (`dev`, `stage`, `prod`) — ver comentario de cabecera del archivo |
+| `.env` | Variables de `dev`, committeado (placeholders, no secretos reales) |
+| `.env.stage.example` / `.env.prod.example` | Plantillas committeadas — copiar a `.env.stage` / `.env.prod` (gitignored) y completar |
+| `deploy.env.example` | Plantilla para `deploy.env` (gitignored) — datos SSH del droplet |
+| `caddy/Caddyfile.prod` | Config de Caddy para producción (HTTPS automático, sin `tls` explícito) |
+| `keycloak/realm-export.json` | Realm `jde-integration` exportado (config + usuarios) — se importa automático al levantar un Keycloak nuevo |
+| `keycloak/export-realm.sh` | Re-exporta el realm después de cambios manuales en la consola admin |
+| `scripts/deploy.sh` | Redespliega `mcp-server` en el droplet por SSH (usa `deploy.env`) |
+
+## Ambientes (Docker Compose profiles)
+
+Un profile por ambiente, con el mismo nombre que `spring.profiles.active` de la app:
+
+| Profile | Servicios | Uso |
+|---|---|---|
+| `dev` | keycloak-db, keycloak, openbao, mcp-server | Desarrollo local (ver [DEPLOYMENT.md](../DEPLOYMENT.md#parte-1-docker-local-dev-y-stage)) |
+| `stage` | keycloak-db, keycloak, openbao, mcp-server | Sin Caddy/dominio público todavía, atado a `127.0.0.1` |
+| `prod` | keycloak-db, keycloak, openbao, mcp-server, caddy | Digital Ocean, HTTPS público (ver [DEPLOYMENT.md](../DEPLOYMENT.md#parte-2-digital-ocean-prod)) |
 
 ```bash
-cp .env.example .env
-# editar .env con passwords reales
-docker compose up -d
+docker compose --profile dev up -d
+docker compose --profile stage --env-file .env.stage up -d
+docker compose --profile prod  --env-file .env.prod  up -d
 ```
 
-Consola admin: http://localhost:8180 (usuario/clave de `.env`)
+## Notas rápidas
 
-## 2. Crear el realm y el client
-
-Copiar `setup-realm-case1.sh` dentro del contenedor y ejecutarlo, o correrlo
-desde una máquina con `kcadm.sh` disponible apuntando a `http://localhost:8180`.
-
-```bash
-docker cp setup-realm-case1.sh keycloak:/tmp/setup-realm-case1.sh
-docker exec -e KC_URL=http://localhost:8080 -it keycloak bash /tmp/setup-realm-case1.sh
-```
-
-Esto crea:
-- Realm `jde-integration`
-- Client público `claude-desktop-mcp` con Authorization Code + PKCE (S256)
-- Protocol mapper que fija la audiencia del access token al propio client
-  (para que ese token no sirva contra otro recurso — RFC 8707)
-
-## 3. Lo que falta del lado del JDE MCP Server (Spring Boot)
-
-El MCP Server tiene que pasar de "recibir un Bearer fijo por config" a
-comportarse como **OAuth Resource Server**:
-
-1. Exponer `/.well-known/oauth-protected-resource` (metadata de recurso protegido)
-   apuntando a `http://localhost:8180/realms/jde-integration` como authorization server.
-2. Validar el JWT entrante contra el JWKS de Keycloak
-   (`http://localhost:8180/realms/jde-integration/protocol/openid-connect/certs`),
-   chequeando `iss`, `exp` y `aud=claude-desktop-mcp`.
-3. Extraer el `sub` (o un claim custom) del token validado y pasarlo al
-   Identity bridge en lugar de leer el JWT de Atina desde la config estática.
-
-## 4. Lo que falta construir: Identity bridge
-
-Todavía no existe. Tiene que:
-- Recibir el `sub` de Keycloak.
-- Resolver la credencial JDE asociada (tabla `keycloak_sub -> jde_user/environment/role`).
-- Llamar a Atina (`Login` o `ProcessToken`) con esa credencial.
-- Cachear el JWT de Atina resultante mientras esté vigente, para no loguear en
-  JDE en cada request.
-
-## Próximos pasos sugeridos
-
-- Validar este flujo end-to-end con Claude Desktop antes de tocar el caso de WhatsApp.
-- Migrar `start-dev` a `start` + hostname real cuando se mueva a la VM de Azure.
-- Definir dónde vive el vault de credenciales JDE (no en Keycloak, no en el MCP Server).
+- **`MCP_KEYCLOAK_ISSUER_URI` debe ser idéntico a `KC_HOSTNAME`** (Keycloak firma el
+  claim `iss` con su propio `KC_HOSTNAME`) — si no coinciden, se rechazan todos los
+  tokens. Detalle en [DEPLOYMENT.md](../DEPLOYMENT.md).
+- El login OAuth completo por browser no funciona con el `mcp-server` containerizado
+  en `dev`/`stage` (sin Caddy) — para eso seguí usando el IDE. Detalle en
+  [DEPLOYMENT.md](../DEPLOYMENT.md#parte-1-docker-local-dev-y-stage).
+- `docker/.env.stage`, `docker/.env.prod` y `docker/deploy.env` están gitignored
+  (secretos reales) — solo se commitean los `.example`.
