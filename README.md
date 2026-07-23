@@ -1,7 +1,7 @@
 # JDE MCP Server
 
 A Model Context Protocol (MCP) server that exposes JD Edwards (JDE) purchase order approval and sales order workflows to AI assistants like Claude. It acts as a bridge between Claude and the JDE backend through a Mulesoft API layer.
-A
+
 ---
 
 ## Table of Contents
@@ -9,6 +9,7 @@ A
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
+- [Environment Profiles (dev/stage/prod)](#environment-profiles-devstageprod)
 - [Configuration](#configuration)
   - [Adding the MCP Server to Claude.ai](#adding-the-mcp-server-to-claudeai)
   - [Adding the MCP Server to Claude Desktop](#adding-the-mcp-server-to-claude-desktop)
@@ -41,7 +42,7 @@ The JDE MCP Server allows Claude (or any MCP-compatible AI assistant) to interac
 User (Claude.ai / Claude Desktop)
       │
       ▼
-Claude AI (MCP Client) ────────────► Keycloak (port 8180)
+Claude AI (MCP Client) ────────────► Keycloak
       │                              realm: jde-integration
       │  MCP over Streamable HTTP    (issues the OAuth2 JWT for
       │  Authorization: Bearer JWT    client atina-mcp-server)
@@ -50,20 +51,25 @@ JDE MCP Server (this application, port 8080)
       │
       │  1. validates the Keycloak JWT (issuer + audience)
       │  2. Identity Bridge: Keycloak sub ──► identity_mapping (H2)
-      │                                  └──► OpenBao (port 8200)
+      │                                  └──► OpenBao
       │                                       secret/data/jde/<user>
-      │  3. auto-login to JDE, then calls Mulesoft
-      │     with X-Approver-Token
-      ├──────────────────────────────┐
-      ▼                              ▼
-Mulesoft Purchase API           Mulesoft Sales Order API
-(port 8085)                     (port 8085)
-      │                              │
-      ▼                              ▼
-JD Edwards EnterpriseOne        JD Edwards EnterpriseOne
+      │  3. auto-login to JDE, then calls the backend
+      │     with the resulting JDE session token
+      ├───────────────────────┬───────────────────────┐
+      ▼                       ▼                       ▼
+Mulesoft (auth /v1/login  Atina Gateway            Mulesoft
+ + customer credit)      (BSSV operations:        (purchase order
+                          purchase orders,          auth only)
+                          customer lookup/detail,
+                          item search & pricing)
+      │                       │
+      ▼                       ▼
+JD Edwards EnterpriseOne  JD Edwards EnterpriseOne
 ```
 
 > Authentication happens in **two layers** (Keycloak to reach the server, a JDE session to operate), connected by the **Identity Bridge**: mapped users are logged into JDE automatically — no manual `jde_login` needed. See **[AUTHENTICATION.md](AUTHENTICATION.md)** for a step-by-step explanation with diagrams.
+>
+> Purchase order tools (list/detail/approve/reject) and most sales order tools call the **Atina Gateway** (`POST /v1/operations/execute`, BSSV operations under `oracle.e1.bssv.*`) with the JDE session token as a Bearer. Only JDE login (`/v1/login`) and the customer credit/financial info lookup still go straight to Mulesoft. Both backend URLs are environment-specific — see [Environment Profiles](#environment-profiles-devstageprod).
 
 ---
 
@@ -77,6 +83,37 @@ JD Edwards EnterpriseOne        JD Edwards EnterpriseOne
 | JDE credentials | A valid JDE username and password — stored in OpenBao for mapped users, or entered manually via `jde_login` |
 | Network access | Client must be able to reach the MCP server URL |
 | Server runtime | The MCP server must be running and publicly reachable (e.g., via ngrok for local dev) |
+
+---
+
+## Environment Profiles (dev/stage/prod)
+
+The server uses standard Spring profiles to keep environment-specific settings (backend URLs, Keycloak issuer, OpenBao address, database file) out of the shared configuration. `application.properties` holds everything common to every environment (JDE business defaults, timeouts, cache TTLs) plus `spring.profiles.active=dev`, so local development needs no extra flags. Per-environment values live in `application-{profile}.properties`.
+
+| Profile | Purpose | Backend URLs | Missing env var |
+|---|---|---|---|
+| `dev` (default) | Local development | Hardcoded `localhost` (Mulesoft `:8089`, Atina Gateway `:8086`, Keycloak `:8180`, OpenBao `:8200`) | Falls back to `localhost` |
+| `stage` | Staging environment | `JDE_MULESOFT_BASE_URL`, `JDE_ATINA_GATEWAY_BASE_URL`, `JDE_KEYCLOAK_ISSUER_URI`, `BAO_ADDR`, `BAO_TOKEN` | **Fails fast at startup** (`PlaceholderResolutionException`) |
+| `prod` | Production | Same variables as `stage` | Same as `stage`, plus a quieter log level |
+
+```bash
+# dev (default) — no extra configuration needed
+./mvnw spring-boot:run
+
+# stage
+./mvnw spring-boot:run -Dspring-boot.run.profiles=stage
+
+# prod (packaged jar)
+SPRING_PROFILES_ACTIVE=prod \
+JDE_MULESOFT_BASE_URL=https://mulesoft.example.com/api \
+JDE_ATINA_GATEWAY_BASE_URL=https://gateway.example.com \
+JDE_KEYCLOAK_ISSUER_URI=https://keycloak.example.com/realms/jde-integration \
+BAO_ADDR=https://vault.example.com \
+BAO_TOKEN=*** \
+java -jar target/JDEMCPServer-0.0.1-SNAPSHOT.jar
+```
+
+Each profile also gets its own H2 file for `identity_mapping` (`./data/identity-mapping`, `./data/identity-mapping-stage`, `./data/identity-mapping-prod`), so environments never share identity-mapping data. `stage`/`prod` deliberately have **no `localhost` fallback**: if a required variable is missing, the app refuses to start instead of silently pointing at the wrong host.
 
 ---
 
@@ -359,7 +396,12 @@ Lists all purchase orders currently pending approval for the logged-in user.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `limit` | integer | ❌ | 10 | Max number of POs to return |
+| `limit` | integer | ❌ | 10 | Max number of POs to return (applied locally after fetching) |
+| `orderTypeCode` | string | ❌ | `jde.purchase.default-order-type-code` (`OP`) | JDE order type code |
+| `businessUnitCode` | string | ❌ | `jde.purchase.default-business-unit-code` (`30`) | JDE business unit (MCU) |
+| `statusCodeNext` | string | ❌ | `jde.purchase.default-status-code-next` (`230`) | Next status code of the approval workflow |
+
+Each returned PO is cached in memory (keyed by its composite identifier) for `jde.purchase.pending-order-ttl-minutes` (default **45 min**) so `jde_approve_purchase_order`/`jde_reject_purchase_order` can look up fields JDE needs (business unit, approval status, amount, routing code) without asking the user for them again. If a PO isn't approved/rejected within that window, it's purged and must be listed again.
 
 **Returns:** Array of pending purchase orders with fields including:
 
@@ -600,6 +642,7 @@ Everything below runs in **dev mode** today. Before moving to the Azure VM:
 
 ### MCP Server
 
+- [ ] Run with `SPRING_PROFILES_ACTIVE=prod` (see [Environment Profiles](#environment-profiles-devstageprod)) — this already forces `JDE_MULESOFT_BASE_URL`, `JDE_ATINA_GATEWAY_BASE_URL`, `JDE_KEYCLOAK_ISSUER_URI`, `BAO_ADDR` and `BAO_TOKEN` to be explicit env vars with no `localhost` fallback.
 - [ ] Serve `/mcp` over **HTTPS** (stable endpoint instead of ngrok).
 - [ ] Provide `BAO_ADDR`, `BAO_TOKEN` and `ATINA_JWT_SECRET` via a real secret mechanism (VM environment / Azure Key Vault) — never committed. In particular, `ATINA_JWT_SECRET` must be the standard-Base64-encoded form (not URL-safe) of the actual HS256 signing key used by the Atina microservice (min. 32 bytes once decoded), copied verbatim — do not re-encode or paste the raw key text.
 - [ ] Migrate `identity_mapping` from embedded H2 (`./data/`) to Postgres if the server stops being single-instance or needs real durability — Flyway migrations are ready, it's a datasource change.

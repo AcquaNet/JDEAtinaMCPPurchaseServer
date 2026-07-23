@@ -16,11 +16,15 @@ JDE MCP Server — a Spring Boot application that implements a Model Context Pro
 # Build
 ./mvnw clean package
 
-# Run
+# Run (dev profile, active by default — see "Environment profiles" below)
 ./mvnw spring-boot:run
+
+# Run with a specific profile
+./mvnw spring-boot:run -Dspring-boot.run.profiles=stage
 
 # Run packaged JAR
 java -jar target/JDEMCPServer-0.0.1-SNAPSHOT.jar
+SPRING_PROFILES_ACTIVE=prod java -jar target/JDEMCPServer-0.0.1-SNAPSHOT.jar
 
 # Run tests
 ./mvnw test
@@ -30,6 +34,15 @@ java -jar target/JDEMCPServer-0.0.1-SNAPSHOT.jar
 ```
 
 To test tools interactively, run the server and launch the MCP Inspector (`npx @modelcontextprotocol/inspector`), connecting with transport "Streamable HTTP" to `http://localhost:8080/mcp`. For Claude.ai access to a local server, expose it with `ngrok http 8080`.
+
+### Environment profiles
+
+Standard Spring profiles: `dev` (default), `stage`, `prod`. `application.properties` holds settings shared by every environment (business/tool defaults, TTLs, timeouts) plus `spring.profiles.active=dev`, so no extra flags are needed for local development. Per-environment overrides live in `application-{profile}.properties`:
+
+- **`application-dev.properties`** — points at services on `localhost` (Mulesoft, Atina Gateway, Keycloak, OpenBao with a `localhost` fallback); this is the file that carries today's local defaults.
+- **`application-stage.properties`** / **`application-prod.properties`** — every host and credential is sourced from an environment variable with **no default** (`${JDE_MULESOFT_BASE_URL}`, `${JDE_ATINA_GATEWAY_BASE_URL}`, `${JDE_KEYCLOAK_ISSUER_URI}`, `${BAO_ADDR}`, `${BAO_TOKEN}`), so a missing var fails startup immediately (`PlaceholderResolutionException`) instead of silently defaulting to `localhost`. Each environment also gets its own H2 file path (`./data/identity-mapping-{stage,prod}`) so they never share a database.
+
+Select a non-default profile with `SPRING_PROFILES_ACTIVE=<profile>` (env var, takes priority over the `application.properties` default) or `-Dspring-boot.run.profiles=<profile>` / `--spring.profiles.active=<profile>`.
 
 ## Architecture
 
@@ -57,15 +70,21 @@ To test tools interactively, run the server and launch the MCP Inspector (`npx @
 
 ## Key Configuration
 
-`src/main/resources/application.properties`:
-- `jde.api.base-url` — Mulesoft backend URL for auth + purchase orders (default: `http://localhost:8083/api`)
-- `jde.so.api.base-url` — Mulesoft backend URL for sales orders (same default)
-- `jde.api.login-timeout-minutes` — Login request timeout / token expiry buffer (default: 5)
-- `spring.security.oauth2.resourceserver.jwt.issuer-uri` — Keycloak issuer (default: `http://localhost:8180/realms/jde-integration`)
-- `jde.mcp.security.expected-audience` — Required `aud` claim in incoming tokens (default: `atina-mcp-server`)
+Split across `application.properties` (common to every profile) and `application-{dev,stage,prod}.properties` (per-environment overrides — see "Environment profiles" above).
+
+Profile-specific (in `application-{profile}.properties`):
+- `jde.api.base-url` / `jde.so.api.base-url` — Mulesoft backend URL for auth + purchase/sales orders (dev default: `http://localhost:8089/api`; stage/prod: `${JDE_MULESOFT_BASE_URL}`, required)
+- `jde.atina.gateway.base-url` — Atina Gateway URL for BSSV operations (dev default: `http://localhost:8086`; stage/prod: `${JDE_ATINA_GATEWAY_BASE_URL}`, required)
+- `spring.security.oauth2.resourceserver.jwt.issuer-uri` — Keycloak issuer (dev default: `http://localhost:8180/realms/jde-integration`; stage/prod: `${JDE_KEYCLOAK_ISSUER_URI}`, required)
+- `jde.vault.addr` / `jde.vault.token` — OpenBao (dev: `BAO_ADDR`/`BAO_TOKEN` env vars with `localhost` fallback; stage/prod: same env vars, no fallback — required)
+- `spring.datasource.url` — H2 file DB, one file per profile (`./data/identity-mapping[-stage|-prod]`, gitignored) for `identity_mapping`; Flyway runs migrations on startup. Seed dev users with `scripts/seed-identity-dev.sh`
+
+Common (in `application.properties`):
+- `jde.api.login-timeout-minutes` — Login request timeout / token expiry buffer (default: 10)
+- `jde.mcp.security.expected-audience` — Required `aud` claim in incoming tokens (default: `atina-mcp-server`, same client id assumed in every environment)
 - `jde.identity.resolver` — Active `IdentityResolver` impl (`native` | `federated`)
-- `jde.vault.addr` / `jde.vault.token` — OpenBao, from env vars `BAO_ADDR` / `BAO_TOKEN` (documented in the Keycloak compose `.env.example`)
-- `spring.datasource.url` — H2 file DB (`./data/`, gitignored) for `identity_mapping`; Flyway runs migrations on startup. Seed dev users with `scripts/seed-identity-dev.sh`
+- `jde.atina.session-source` — Atina session token strategy (`claim` | `vault` | `claim-then-vault` | `vault-then-claim`); same default in all profiles today, override per-profile if a rollout needs to diverge
+- `jde.purchase.*` / `jde.pricing.*` — JDE business defaults for purchase-order and pricing tools (order type, business unit, processing versions, pending-order cache TTL), not environment-dependent
 - MCP endpoint is `/mcp` (`spring.ai.mcp.server.streamable-http.mcp-endpoint`)
 - Tomcat timeouts set to 600s for long-lived SSE connections
 
