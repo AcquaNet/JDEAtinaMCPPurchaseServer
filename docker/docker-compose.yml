@@ -50,10 +50,13 @@ services:
       KC_DB_PASSWORD: ${KC_DB_PASSWORD:-changeme_db_password}
       KEYCLOAK_ADMIN: ${KC_ADMIN_USER:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:-changeme_admin_password}
-      # dev/stage: localhost (sin Caddy). prod: dominio publico HTTPS (detras de Caddy),
-      # con KC_PROXY_HEADERS para que Keycloak confie en X-Forwarded-* de Caddy.
+      # dev/stage: localhost (sin Caddy). prod: dominio publico HTTPS (detras de Caddy).
       KC_HOSTNAME: ${KC_HOSTNAME:-http://localhost:8180}
-      KC_PROXY_HEADERS: ${KC_PROXY_HEADERS:-}
+      # Inofensivo sin proxy delante (dev/stage): Keycloak solo confia en X-Forwarded-*
+      # si el request los trae. Necesario en prod para que Keycloak confie en los que
+      # agrega Caddy. Un valor vacio ("") rompe el arranque -- por eso va fijo, no via
+      # variable con default vacio.
+      KC_PROXY_HEADERS: xforwarded
       KC_HTTP_ENABLED: "true"
       # En produccion (droplet DO), start-dev sigue siendo aceptable mientras el
       # volumen keycloak_data persista los datos entre reinicios (no es in-memory).
