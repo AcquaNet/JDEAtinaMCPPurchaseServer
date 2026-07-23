@@ -96,7 +96,12 @@
       "Bash(docker rmi *)",
       "Bash(grep -q \"^keycloak$\")",
       "Bash(KC_DB_PASSWORD=changeme_db_password ./export-realm.sh)",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "WebFetch(domain:ngrok.com)",
+      "Bash(./scripts/package.sh *)",
+      "Bash(unzip -l test-package.zip)",
+      "Bash(curl -s http://localhost:18099/.well-known/oauth-protected-resource)",
+      "Bash(curl -s http://localhost:18099/.well-known/oauth-protected-resource -H 'X-Forwarded-Proto: https' -H 'X-Forwarded-Host: 77f1-52-26-62-241.ngrok-free.app')"
     ]
   }
 }

@@ -41,3 +41,6 @@ docker/.env.prod
 docker/deploy.env
 docker/caddy/data/
 docker/caddy/config/
+
+### ZIP generado por docker/scripts/package.sh (Parte 3 de DEPLOYMENT.md) ###
+/jde-mcp-server-docker-*.zip

@@ -1,25 +1,28 @@
 # Guía de Despliegue — JDE MCP Server
 
-Guía paso a paso para desplegar el stack (Keycloak + OpenBao + MCP Server, y en
-producción también Caddy) tanto en **Docker local** (dev/stage) como en
-**Digital Ocean** (prod). Para referencia rápida de qué archivos hay en `docker/`
-y qué hace cada uno, ver [docker/README.md](docker/README.md); esta guía es el
-recorrido completo de principio a fin.
+Guía paso a paso: cómo correr el stack localmente (con **ngrok** para demos con
+login OAuth real), cómo empaquetarlo para llevarlo a **otra PC**, y — más
+adelante — cómo desplegarlo en **Digital Ocean**. Pensada para poder repetirse
+sin tener que reconstruir el razonamiento cada vez.
+
+Para referencia rápida de qué archivo hace qué dentro de `docker/`, ver
+[docker/README.md](docker/README.md) — esta guía es el recorrido completo.
 
 ---
 
 ## Índice
 
-- [Arquitectura del despliegue](#arquitectura-del-despliegue)
-- [Parte 1: Docker local (dev y stage)](#parte-1-docker-local-dev-y-stage)
-- [Demo local con ngrok](#demo-local-con-ngrok)
-- [Parte 2: Digital Ocean (prod)](#parte-2-digital-ocean-prod)
+- [Arquitectura](#arquitectura)
+- [Parte 1: Preparar tu máquina](#parte-1-preparar-tu-máquina)
+- [Parte 2: Demo con ngrok (login OAuth real)](#parte-2-demo-con-ngrok-login-oauth-real)
+- [Parte 3: Empaquetar y llevar a otra PC](#parte-3-empaquetar-y-llevar-a-otra-pc)
+- [Parte 4: Digital Ocean (prod)](#parte-4-digital-ocean-prod)
 - [Keycloak: exportar/importar el realm](#keycloak-exportarimportar-el-realm)
 - [Troubleshooting](#troubleshooting)
 
 ---
 
-## Arquitectura del despliegue
+## Arquitectura
 
 ```
                          Internet
@@ -27,7 +30,7 @@ recorrido completo de principio a fin.
                  (solo prod: 80/443)
                             ▼
                         ┌────────┐
-                        │ Caddy  │  <- HTTPS automático (Let's Encrypt)
+                        │ Caddy  │  <- HTTPS automático (Let's Encrypt), SOLO en prod
                         └───┬────┘
               ┌─────────────┼─────────────┐
               ▼                           ▼
@@ -39,42 +42,67 @@ recorrido completo de principio a fin.
      (vault credenciales JDE)
 ```
 
-En **dev/stage** no hay Caddy: cada servicio se publica directo por puerto,
-atado a `127.0.0.1` (no accesible desde otras máquinas). En **prod**, Caddy es
-el único servicio con puertos públicos (80/443); todo lo demás queda interno.
+Tres ambientes = tres **Docker Compose profiles** del mismo
+`docker/docker-compose.yml` (mismo nombre que `spring.profiles.active` de la app):
 
-Los tres ambientes (`dev` | `stage` | `prod`) son **Docker Compose profiles**
-del mismo `docker/docker-compose.yml`, con el mismo nombre que
-`spring.profiles.active` de la app.
+| Profile | Cuándo se usa |
+|---|---|
+| `dev` | Tu máquina (esta guía, Partes 1-3) |
+| `stage` | Solo si existe un ambiente de staging real de JDE/Mulesoft (ver nota en Parte 1) |
+| `prod` | Digital Ocean (Parte 4, más adelante) |
+
+En `dev`/`stage` no hay Caddy — cada servicio se publica por puerto directo,
+atado a `127.0.0.1`. Eso es justamente lo que **ngrok** resuelve para las demos
+(Parte 2): expone esos puertos por HTTPS público sin necesitar Caddy ni un
+dominio propio todavía.
+
+### ¿Por qué `localhost` no alcanza para una demo?
+
+```
+SIN ngrok — no funciona para una demo:
+
+  Claude.ai (nube)  ────X────>  http://localhost:8180   Claude.ai jamás puede
+                                                          llegar a "localhost"
+  Claude Desktop    ───────>   http://localhost:8180    esto sí funciona (mismo
+  (browser local)                                        Mac), PERO...
+
+  mcp-server (contenedor) ──X──> http://localhost:8180   "localhost" ahí ES EL
+                                                          PROPIO contenedor, no
+                                                          llega a Keycloak
+
+CON ngrok — funciona siempre, sea Claude.ai, Desktop, o el mcp-server
+containerizado:
+
+  Claude.ai / Desktop ──HTTPS──> https://<tu-dominio>.ngrok...  (Keycloak)
+  mcp-server           ──HTTPS──> https://<tu-dominio>.ngrok...  (mismo lugar)
+
+  KC_HOSTNAME  ==  MCP_KEYCLOAK_ISSUER_URI  ==  esa misma URL pública ngrok
+```
 
 ---
 
-## Parte 1: Docker local (dev y stage)
+## Parte 1: Preparar tu máquina
 
 ### Prerequisitos
 
-- Docker Desktop (o Docker Engine + Compose plugin) instalado y corriendo.
-- Java 25 + Maven solo si además vas a correr el MCP Server desde el IDE
-  (flujo normal de día a día en dev).
+- Docker Desktop instalado y corriendo.
+- Java 25 + Maven si vas a correr el MCP Server desde el IDE (uso normal de día a día).
+- Cuenta de ngrok (gratis alcanza) — [ngrok.com](https://ngrok.com) → Sign up.
 
-### 1. Levantar la infraestructura (Keycloak + OpenBao)
-
-**Este es el flujo normal de día a día**: correr el MCP Server **desde el
-IDE/IntelliJ** (`./mvnw spring-boot:run`, o el botón Run — perfil `dev` activo
-por defecto), apuntando a Keycloak/OpenBao levantados por Docker. Para eso
-levantá solo esos dos servicios, **sin** el contenedor `mcp-server`:
+### Levantar Keycloak + OpenBao
 
 ```bash
 cd docker
 docker compose --profile dev up -d keycloak-db keycloak openbao
 ```
 
-> Si corrés `docker compose --profile dev up -d` **sin** listar servicios,
-> también arranca el contenedor `mcp-server`, que publica el puerto 8080 igual
-> que IntelliJ — van a pelear por el mismo puerto. Si ya lo levantaste sin
-> querer: `docker compose --profile dev stop mcp-server`.
+> ⚠️ Fijate que acá se listan los 3 servicios explícitamente, **sin**
+> `mcp-server`. Si corrés `docker compose --profile dev up -d` a secas, también
+> levanta el contenedor `mcp-server`, que ocupa el puerto 8080 igual que
+> IntelliJ — van a chocar. Si ya lo levantaste sin querer:
+> `docker compose --profile dev stop mcp-server`.
 
-Verificar que levantó todo:
+Verificar:
 
 ```bash
 docker compose --profile dev ps
@@ -82,113 +110,223 @@ curl -s http://localhost:8180/realms/jde-integration | jq .realm     # Keycloak
 curl -s http://localhost:8200/v1/sys/health | jq .initialized        # OpenBao
 ```
 
-Ahora sí, corré el MCP Server desde IntelliJ (o `./mvnw spring-boot:run`) —
-funciona exactamente igual que antes de este cambio de Docker, nada nuevo que
-aprender ahí.
+Ahora corré el MCP Server desde IntelliJ (o `./mvnw spring-boot:run`) — perfil
+`dev` activo por defecto, nada nuevo que aprender ahí.
 
-### 2. Probar la imagen Docker del MCP Server (opcional)
+> **`stage`**: existe como profile pero solo tiene sentido si hay un ambiente
+> de staging *real y compartido* de JDE/Mulesoft (`application-stage.properties`
+> exige esas URLs por variable de entorno, sin fallback a `localhost`). Si no
+> existe todavía, ignorá `stage` — no aplica a esta guía.
 
-Solo si además querés validar que la **imagen Docker** en sí funciona (por
-ejemplo antes de un deploy). **Pará el MCP Server del IDE primero** (mismo
-puerto 8080):
-
-```bash
-# Build local de la imagen (usa el Dockerfile de la raíz del repo)
-docker compose --profile dev build mcp-server
-docker compose --profile dev up -d mcp-server
-docker compose --profile dev logs -f mcp-server
-curl -s http://localhost:8080/.well-known/oauth-protected-resource
-```
-
-> **Limitación conocida**: con el `mcp-server` containerizado en `dev`, el
-> login OAuth completo por browser (Claude.ai/Desktop) **no** va a funcionar tal
-> cual — Keycloak firma el token con `KC_HOSTNAME=http://localhost:8180`, pero
-> desde adentro del contenedor `mcp-server` esa URL no llega a Keycloak (ahí
-> "localhost" es el propio contenedor). Para probar tools sin el login
-> interactivo, usá el bypass de token de Atina (HS256, ver AUTHENTICATION.md).
-> Para una demo con login OAuth real sin desplegar a producción todavía, ver
-> [Demo local con ngrok](#demo-local-con-ngrok) más abajo.
-
-### 3. Ambiente `stage` — ¿en qué se diferencia de `dev`?
-
-La única diferencia real hoy es **a qué backend de JDE apunta**, no la
-infraestructura Docker en sí (misma Keycloak/OpenBao, sin Caddy en ninguno de
-los dos):
-
-- **`dev`**: `application-dev.properties` tiene *hardcodeado* `localhost` para
-  Mulesoft, Gateway de Atina, Keycloak y OpenBao (con fallback). Pensado para
-  tu propia máquina, donde vos sabés qué corre en esos puertos.
-- **`stage`**: `application-stage.properties` **exige** (sin fallback) las URLs
-  de Mulesoft/Gateway/Keycloak/OpenBao vía variables de entorno
-  (`JDE_MULESOFT_BASE_URL`, etc.) — pensado para apuntar a un ambiente de
-  staging *real y compartido* de JDE/Mulesoft (no tu laptop), típicamente
-  usado por todo un equipo antes de ir a producción.
-
-**Si todavía no existe ese ambiente de staging de JDE**, `stage` no te sirve de
-nada por ahora — usá solo `dev` (tu máquina) y `prod` (Digital Ocean) e ignorá
-`stage` hasta que haga falta.
-
-Cuando exista, para usarlo:
-
-```bash
-cd docker
-cp .env.stage.example .env.stage   # completar con los hosts reales de stage
-docker compose --profile stage --env-file .env.stage up -d
-```
-
-### 4. Apagar / limpiar
+### Apagar / limpiar
 
 ```bash
 docker compose --profile dev down          # para los contenedores, conserva los volúmenes
 docker compose --profile dev down -v       # además borra volúmenes (¡pierde datos de Keycloak/OpenBao/H2!)
 ```
 
-### Demo local con ngrok
+---
 
-Resuelve la limitación de arriba exponiendo **Keycloak y el MCP Server** por
-HTTPS público, sin tocar Digital Ocean todavía. Sirve tanto si el MCP Server
-corre en el contenedor como desde el IDE — la clave es que Keycloak deje de
-firmar los tokens como `localhost` (que ni Claude.ai ni un contenedor pueden
-alcanzar) y pase a firmarlos con una URL pública que todos puedan resolver.
+## Parte 2: Demo con ngrok (login OAuth real)
 
-1. **Dos túneles ngrok** (un solo `ngrok` puede levantar varios si tenés cuenta
-   gratuita con dominios/túneles habilitados; si no, dos terminales):
-   ```bash
-   ngrok http 8180     # Keycloak -> anotá la URL pública, ej. https://abcd1234.ngrok-free.app
-   ngrok http 8080     # MCP Server -> anotá la otra URL pública
-   ```
-   (Con cuenta gratuita de ngrok podés reservar un dominio estático fijo para no
-   tener que cambiar la URL cada vez que reiniciás el túnel.)
+Usamos **dos terminales, cada una con su propio `ngrok http`** (no el archivo
+de config con `ngrok start --all`) — es lo que funciona sin importar la
+versión de ngrok instalada. Verificado con `ngrok version 3.36.1`.
 
-2. **Recrear Keycloak con `KC_HOSTNAME` apuntando al túnel**:
-   ```bash
-   KC_HOSTNAME=https://abcd1234.ngrok-free.app \
-   docker compose --profile dev up -d --force-recreate keycloak
-   ```
+> Requiere el MCP Server con `server.forward-headers-strategy=framework`
+> (`application.properties`) — si tu checkout es viejo y no lo tiene, `git
+> pull` y reconstruir (`docker compose --profile dev build mcp-server`, o
+> reiniciar desde el IDE). Sin esto, el login falla con `Protected resource
+> http://... does not match expected https://...` porque el server arma la URL
+> como `http://` en vez de confiar en el `https://` real que ve ngrok/Caddy.
 
-3. **El MCP Server tiene que validar contra esa misma URL** (tiene que
-   coincidir exacto con `KC_HOSTNAME`, ver nota más abajo sobre por qué):
-   - Si corre desde IntelliJ: agregar como variable de entorno del run
-     configuration `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=https://abcd1234.ngrok-free.app/realms/jde-integration`.
-   - Si corre containerizado: `MCP_KEYCLOAK_ISSUER_URI=https://abcd1234.ngrok-free.app/realms/jde-integration docker compose --profile dev up -d --force-recreate mcp-server`.
+### Cheat sheet (una vez que ya hiciste el setup inicial una vez)
 
-4. **Apuntar Claude Desktop/Claude.ai** a la URL del segundo túnel:
-   `https://<otra-url>.ngrok-free.app/mcp`.
+```bash
+# Terminal A (dejar abierta)
+ngrok http 8180 --url https://TU-DOMINIO-FIJO.ngrok-free.app    # Keycloak
 
-5. Si el login falla con error de `redirect_uri` inválido, agregar la URL de
-   callback exacta que informa el error al client `atina-mcp-server` en la
-   consola admin de Keycloak (ahora en `https://abcd1234.ngrok-free.app/admin`).
+# Terminal B (dejar abierta)
+ngrok http 8080                                                  # MCP Server
 
-> **Alternativa más simple si la demo puede esperar**: si para cuando sea la
-> demo ya tenés Digital Ocean levantado (Parte 2), usar directamente ese
-> ambiente evita todo esto — los dominios reales ya resuelven igual para
-> cualquier cliente, sin túneles que reconfigurar.
+# Terminal C
+cd docker && docker compose --profile dev up -d
+
+# Copiar la URL que te dio la Terminal B (cambia cada vez) y pegarla en
+# Claude Desktop/Claude.ai como https://<esa-url>/mcp
+```
+
+Si esto no alcanza (primera vez, o algo cambió), seguí el setup completo abajo.
+
+### Setup inicial (se hace UNA sola vez)
+
+**Paso 1 — Conseguir tu dominio fijo de ngrok** (gratis, uno por cuenta, no
+cambia nunca):
+
+1. Entrar a [dashboard.ngrok.com](https://dashboard.ngrok.com) → **Domains**.
+2. Ya viene uno asignado a tu cuenta (algo como
+   `tu-nombre-random.ngrok-free.app`) — copialo. Si no ves ninguno, "+ Create
+   Domain" para reclamarlo.
+3. `ngrok config add-authtoken TU_AUTHTOKEN` (una sola vez; el token está en
+   [dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken)).
+
+**Paso 2 — Levantar los dos túneles, cada uno en su terminal**:
+
+```bash
+# Terminal A -- Keycloak, con el dominio fijo del Paso 1
+ngrok http 8180 --url https://TU-DOMINIO-FIJO.ngrok-free.app
+```
+
+```bash
+# Terminal B -- MCP Server, con dominio aleatorio (alcanza con pegarlo en Claude)
+ngrok http 8080
+```
+
+Dejá las dos terminales abiertas. En la Terminal B vas a ver algo como:
+
+```
+Forwarding   https://a1b2c3d4.ngrok-free.app -> http://localhost:8080
+```
+
+Esa URL (`a1b2c3d4...`) es la que copiás para Claude en el Paso 6 — **cambia
+cada vez que reiniciás** esta terminal, por eso no le pusimos dominio fijo (el
+free tier de ngrok da uno solo, y lo reservamos para Keycloak).
+
+> Si preferís un solo comando (`ngrok start --all` con un archivo de config
+> `endpoints:`/`version: 3`), es posible en agentes ngrok recientes, pero no
+> anduvo con la instalación con la que probamos esto — si te tienta ahorrarte
+> las dos terminales, probalo, y si da el error `must define at least one
+> tunnel`, volvé a las dos terminales de arriba (funciona siempre).
+
+**Paso 3 — Configurar Keycloak y el MCP Server con la URL fija** (una sola vez;
+como `KC_HOSTNAME` queda guardado en `docker/.env`, no hace falta repetir esto
+en cada demo):
+
+Editar `docker/.env` y agregar/reemplazar:
+
+```bash
+KC_HOSTNAME=https://TU-DOMINIO-FIJO.ngrok-free.app
+MCP_KEYCLOAK_ISSUER_URI=https://TU-DOMINIO-FIJO.ngrok-free.app/realms/jde-integration
+```
+
+Si vas a correr el MCP Server **desde IntelliJ** (lo más común), agregá esa
+misma variable al Run Configuration (Environment variables):
+```
+SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=https://TU-DOMINIO-FIJO.ngrok-free.app/realms/jde-integration
+```
+
+Recrear Keycloak para que tome el nuevo hostname:
+
+```bash
+cd docker
+docker compose --profile dev up -d --force-recreate keycloak
+```
+
+**Paso 4 — Agregar el redirect URI de ngrok al client de Keycloak** (para que
+el login no falle con "invalid redirect_uri"):
+
+1. `https://TU-DOMINIO-FIJO.ngrok-free.app/admin` → login (admin / la password de `docker/.env`).
+2. Realm `jde-integration` → Clients → `atina-mcp-server` → **Valid redirect URIs**
+   → agregar la URL de callback que en algún momento te va a mostrar el error de
+   Claude.ai/Desktop (la primera vez que intentes loguearte va a fallar UNA vez
+   mostrando exactamente cuál falta — se agrega esa y listo).
+3. Guardar, y exportar el realm para no perder el cambio si se recrea el
+   contenedor (ver [Keycloak: exportar/importar](#keycloak-exportarimportar-el-realm)).
+
+**Paso 5 — Conectar Claude**: pegar `https://<url-de-la-terminal-b>/mcp`
+como URL del servidor MCP en Claude Desktop/Claude.ai, y completar el login.
+
+### Qué se repite en cada demo (a partir de acá)
+
+Solo esto — todo lo del setup inicial queda guardado:
+
+1. Abrir las dos terminales (Paso 2) y dejarlas corriendo.
+2. `docker compose --profile dev up -d` (o correr el MCP Server desde IntelliJ).
+3. La URL de la **Terminal B** (mcp-server) cambia cada vez — copiarla y
+   actualizarla en Claude. La de la **Terminal A** (keycloak) no cambia nunca
+   (dominio fijo del Paso 1).
+
+> **Si en vez de la demo querés probar tools sin login interactivo**, usá el
+> bypass de token de Atina (HS256, ver AUTHENTICATION.md) — no necesita ngrok
+> ni Keycloak en absoluto.
+
+> **Alternativa si la demo puede esperar**: si para entonces ya tenés Digital
+> Ocean levantado (Parte 4), usalo directo — dominios reales, sin túneles que
+> mantener corriendo.
 
 ---
 
-## Parte 2: Digital Ocean (prod)
+## Parte 3: Empaquetar y llevar a otra PC
 
-Dominio de este despliegue: **`jdemcp-atina-connection.com`** (MCP Server) y
+La otra PC **no necesita** Java, Maven, ni el código fuente — solo Docker y la
+carpeta `docker/`. La imagen del MCP Server se construye acá (esta máquina, que
+tiene el JDK/Maven) y se sube a un registry; la otra PC solo la descarga.
+
+### En esta máquina
+
+**1. Build y push de la imagen** (necesitás una cuenta en Docker Hub, o
+cualquier otro registry — `docker login` primero):
+
+```bash
+# Desde la raíz del repo
+docker build -t <tu-usuario-dockerhub>/jde-mcp-server:dev .
+docker push <tu-usuario-dockerhub>/jde-mcp-server:dev
+```
+
+> Esto arma la imagen para la arquitectura de **esta** máquina (ej. ARM si tu
+> Mac es Apple Silicon). Si la otra PC es de otra arquitectura (Windows/Linux
+> Intel, por ejemplo), usar `docker buildx build --platform linux/amd64 ...
+> --push` como en la Parte 4 (Paso 1), apuntando a la plataforma de la PC
+> destino.
+
+**2. Armar el ZIP con solo lo necesario** (ya hay un script para esto):
+
+```bash
+cd docker
+./scripts/package.sh
+```
+
+Genera `jde-mcp-server-docker-YYYYMMDD.zip` en la raíz del repo, con:
+`docker-compose.yml`, `.env` (placeholders de dev, sin secretos reales),
+`.env.stage.example`, `.env.prod.example`, `Caddyfile.prod`,
+`realm-export.json` + `export-realm.sh`, `deploy.sh`, el `Dockerfile`, y esta
+misma guía (`DEPLOYMENT.md`). **No** incluye `.env.stage`/`.env.prod`/
+`deploy.env` reales (secretos) — la otra PC arranca esos desde los `.example`.
+
+**3. Transferir el ZIP** a la otra PC (AirDrop, USB, `scp`, lo que sea).
+
+### En la otra PC
+
+```bash
+unzip jde-mcp-server-docker-*.zip
+cd jde-mcp-server-docker
+
+# Editar .env con MCP_IMAGE apuntando a la imagen pusheada:
+#   MCP_IMAGE=<tu-usuario-dockerhub>/jde-mcp-server:dev
+
+docker compose --profile dev up -d keycloak-db keycloak openbao
+docker compose --profile dev pull mcp-server
+docker compose --profile dev up -d mcp-server
+```
+
+Para la demo con ngrok en esa PC: repetir el setup de la
+[Parte 2](#parte-2-demo-con-ngrok-login-oauth-real) ahí (ngrok tunelea
+`localhost` de la máquina donde corre, así que hay que instalarlo y
+configurarlo también en la otra PC — el dominio fijo de tu cuenta ngrok sirve
+igual desde cualquier máquina donde inicies sesión).
+
+> Si la otra PC no va a tener internet/acceso al registry, alternativa 100%
+> offline: `docker save <imagen> -o mcp-server.tar` en esta máquina, incluir
+> ese `.tar` en el ZIP a mano, y en la otra PC `docker load -i mcp-server.tar`
+> antes de `docker compose up` (sin necesidad de `pull`).
+
+---
+
+## Parte 4: Digital Ocean (prod)
+
+> Retomar esta parte una vez que la demo con ngrok (Parte 2) esté validada.
+
+Dominio: **`jdemcp-atina-connection.com`** (MCP Server) y
 **`auth.jdemcp-atina-connection.com`** (Keycloak).
 
 ### Prerequisitos
@@ -210,18 +348,14 @@ Dominio de este despliegue: **`jdemcp-atina-connection.com`** (MCP Server) y
 
 ### Paso 1 — Build y push de la imagen del MCP Server
 
-El droplet no necesita el código fuente, solo la carpeta `docker/` — la imagen
-se buildea en otra máquina (esta) y se publica en un registry.
-
 > **Mac → Linux**: los droplets "estándar" de Digital Ocean son `linux/amd64`
 > (Intel/AMD), aunque tu Mac sea Apple Silicon (ARM) o Intel. `docker buildx
 > --platform linux/amd64` compila para esa arquitectura sin importar la tuya
 > (usa emulación QEMU si tu Mac no es amd64 nativo -- el build tarda más que en
-> local, pero el resultado corre bien en el droplet). Si en algún momento
-> preferís evitar la emulación, Digital Ocean también ofrece droplets ARM
-> ("Ampere") -- ahí sí buildearías `--platform linux/arm64` nativo y rápido
-> desde un Mac Apple Silicon, pero es una elección explícita del droplet, no el
-> default.
+> local, pero el resultado corre bien en el droplet). Digital Ocean también
+> ofrece droplets ARM ("Ampere") si en algún momento preferís evitar la
+> emulación buildeando `--platform linux/arm64` nativo desde Apple Silicon,
+> pero no es el default.
 
 ```bash
 # Desde la raíz del repo (no docker/)
@@ -268,11 +402,11 @@ Valores a completar (ver comentarios en el archivo):
 apuntando a `auth.jdemcp-atina-connection.com` — **no los cambies** a menos que
 cambies el dominio, y si lo hacés, cambialos **juntos** (ver nota abajo).
 
-> ⚠️ **`MCP_KEYCLOAK_ISSUER_URI` tiene que ser idéntico a `KC_HOSTNAME`.**
-> Keycloak firma el claim `iss` de cada token con su propio `KC_HOSTNAME`; si el
-> MCP Server espera un issuer distinto, rechaza **todos** los tokens (401 en
-> todo). Es el error más fácil de cometer acá — revisar dos veces si algo
-> devuelve 401 inesperadamente.
+> ⚠️ **`MCP_KEYCLOAK_ISSUER_URI` tiene que ser idéntico a `KC_HOSTNAME`**
+> (mismo principio que en la demo con ngrok, Parte 2). Keycloak firma el claim
+> `iss` de cada token con su propio `KC_HOSTNAME`; si el MCP Server espera un
+> issuer distinto, rechaza **todos** los tokens (401 en todo). Es el error más
+> fácil de cometer acá — revisar dos veces si algo devuelve 401 inesperadamente.
 
 ### Paso 4 — Levantar el stack
 
@@ -352,15 +486,19 @@ Para no reconfigurar Keycloak a mano cada vez que se levanta un ambiente nuevo:
 
 | Síntoma | Causa probable | Verificar |
 |---|---|---|
-| Caddy no obtiene certificado | DNS no resuelve al droplet, o puertos 80/443 no accesibles desde internet | `dig +short jdemcp-atina-connection.com`, `curl http://jdemcp-atina-connection.com` desde otra máquina, `docker compose ... logs caddy` |
-| Todos los tokens de Keycloak son rechazados (401) | `MCP_KEYCLOAK_ISSUER_URI` no coincide con `KC_HOSTNAME` | Revisar que ambos sean la misma URL pública HTTPS en `.env.prod` |
-| Claude.ai no puede completar el login | Redirect URI no autorizado en el client de Keycloak | Ver Paso 5, checklist |
-| `jde.vault.addr`/`jde.vault.token` fallan | `BAO_TOKEN` no seteado, o token de OpenBao expirado/inválido | `docker compose ... logs openbao`; por SSH tunnel: `curl http://127.0.0.1:8200/v1/sys/health` |
-| Login OAuth no funciona en `dev`/`stage` containerizado | Limitación conocida (ver Parte 1, paso 1) | Usar el IDE para probar el login real |
+| Keycloak no arranca: `Invalid value for option 'KC_PROXY_HEADERS'` | Variable pasada vacía en vez de omitida | Ya corregido: viene fijo en `xforwarded` en `docker-compose.yml`, no depende de ninguna variable |
+| `ngrok start --all` → `must define at least one tunnel` | El archivo de config (`endpoints:`/`version: 3`) no es compatible con tu versión de ngrok instalada | Usar el método de dos terminales (`ngrok http <puerto>` x2) de la Parte 2 — no depende de ningún archivo de config |
+| Login OAuth no funciona (dev/stage sin ngrok) | Limitación conocida — ver [Parte 2](#parte-2-demo-con-ngrok-login-oauth-real) | Usar ngrok, o el IDE + Claude Desktop en la misma máquina sin contenedor |
+| Claude no puede completar el login con ngrok | Redirect URI no autorizado, o `KC_HOSTNAME`/`MCP_KEYCLOAK_ISSUER_URI` no coinciden | Ver Parte 2, Paso 3 y 4 |
+| `mcp-remote`: `Protected resource http://...` does not match expected `https://...` | El MCP Server no confía en `X-Forwarded-Proto` del proxy (ngrok/Caddy) y arma la URL como `http://` en vez de `https://` | Ya corregido: `server.forward-headers-strategy=framework` en `application.properties`. Si ves esto, actualizá el código (`git pull`) y reconstruí: `docker compose --profile dev build mcp-server` (o reiniciar desde el IDE) |
+| `mcp-remote`: `Discovered authorization server: http://keycloak:8080/...` | El MCP Server todavía apunta al issuer interno de Docker, no al túnel ngrok de Keycloak | Completar Parte 2, Paso 3 (`KC_HOSTNAME`/`MCP_KEYCLOAK_ISSUER_URI` = URL fija de ngrok) y recrear `keycloak` |
+| Caddy no obtiene certificado (prod) | DNS no resuelve al droplet, o puertos 80/443 no accesibles desde internet | `dig +short jdemcp-atina-connection.com`, `curl http://jdemcp-atina-connection.com` desde otra máquina, `docker compose ... logs caddy` |
+| Todos los tokens de Keycloak son rechazados (401) | `MCP_KEYCLOAK_ISSUER_URI` no coincide con `KC_HOSTNAME` | Revisar que ambos sean la misma URL pública (ngrok o dominio real) |
+| `jde.vault.addr`/`jde.vault.token` fallan | `BAO_TOKEN` no seteado, o token de OpenBao expirado/inválido | `docker compose ... logs openbao`; `curl http://127.0.0.1:8200/v1/sys/health` (o por SSH tunnel en prod) |
 
 ### Seguridad
 
-- Solo Caddy publica puertos al mundo (80/443) en `prod`. Keycloak, OpenBao y
+- En `prod`, solo Caddy publica puertos al mundo (80/443). Keycloak, OpenBao y
   `mcp-server` quedan atados a `127.0.0.1` del droplet — para administrarlos
   desde afuera, usar un túnel SSH: `ssh -L 8180:127.0.0.1:8180 root@<IP-DROPLET>`.
 - Usar el `OPENBAO_ROOT_TOKEN` solo en dev. En stage/prod, crear una policy de
@@ -368,3 +506,4 @@ Para no reconfigurar Keycloak a mano cada vez que se levanta un ambiente nuevo:
   esa policy como `BAO_TOKEN`.
 - `docker/.env.stage`, `docker/.env.prod` y `docker/deploy.env` están
   gitignored (contienen secretos reales) — solo se commitean los `.example`.
+- El ZIP de la Parte 3 tampoco incluye esos archivos con secretos reales.

@@ -20,6 +20,7 @@ producción).
 | `keycloak/realm-export.json` | Realm `jde-integration` exportado (config + usuarios) — se importa automático al levantar un Keycloak nuevo |
 | `keycloak/export-realm.sh` | Re-exporta el realm después de cambios manuales en la consola admin |
 | `scripts/deploy.sh` | Redespliega `mcp-server` en el droplet por SSH (usa `deploy.env`) |
+| `scripts/package.sh` | Arma un ZIP portable (sin secretos, sin código fuente) para llevar el stack a otra PC |
 
 ## Ambientes (Docker Compose profiles)
 
@@ -27,9 +28,9 @@ Un profile por ambiente, con el mismo nombre que `spring.profiles.active` de la 
 
 | Profile | Servicios | Uso |
 |---|---|---|
-| `dev` | keycloak-db, keycloak, openbao, mcp-server | Desarrollo local (ver [DEPLOYMENT.md](../DEPLOYMENT.md#parte-1-docker-local-dev-y-stage)) |
+| `dev` | keycloak-db, keycloak, openbao, mcp-server | Desarrollo local (ver [DEPLOYMENT.md](../DEPLOYMENT.md#parte-1-preparar-tu-máquina)) |
 | `stage` | keycloak-db, keycloak, openbao, mcp-server | Sin Caddy/dominio público todavía, atado a `127.0.0.1` |
-| `prod` | keycloak-db, keycloak, openbao, mcp-server, caddy | Digital Ocean, HTTPS público (ver [DEPLOYMENT.md](../DEPLOYMENT.md#parte-2-digital-ocean-prod)) |
+| `prod` | keycloak-db, keycloak, openbao, mcp-server, caddy | Digital Ocean, HTTPS público (ver [DEPLOYMENT.md](../DEPLOYMENT.md#parte-4-digital-ocean-prod)) |
 
 ```bash
 docker compose --profile dev up -d
@@ -42,8 +43,8 @@ docker compose --profile prod  --env-file .env.prod  up -d
 - **`MCP_KEYCLOAK_ISSUER_URI` debe ser idéntico a `KC_HOSTNAME`** (Keycloak firma el
   claim `iss` con su propio `KC_HOSTNAME`) — si no coinciden, se rechazan todos los
   tokens. Detalle en [DEPLOYMENT.md](../DEPLOYMENT.md).
-- El login OAuth completo por browser no funciona con el `mcp-server` containerizado
-  en `dev`/`stage` (sin Caddy) — para eso seguí usando el IDE. Detalle en
-  [DEPLOYMENT.md](../DEPLOYMENT.md#parte-1-docker-local-dev-y-stage).
+- El login OAuth completo por browser no funciona de entrada en `dev`/`stage`
+  (sin Caddy, todo en `localhost`) — para demos con login real, usar ngrok:
+  [DEPLOYMENT.md, Parte 2](../DEPLOYMENT.md#parte-2-demo-con-ngrok-login-oauth-real).
 - `docker/.env.stage`, `docker/.env.prod` y `docker/deploy.env` están gitignored
   (secretos reales) — solo se commitean los `.example`.
