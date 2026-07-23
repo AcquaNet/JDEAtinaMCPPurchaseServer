@@ -53,7 +53,20 @@
       "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/mcp -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{}')",
       "Bash(echo \"server /mcp responde: $\\(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/mcp -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{}'\\) \\(401 = arriba y exigiendo auth, correcto\\)\")",
       "Bash(bash -n ~/.claude/scripts/clean-claude-mcp-cache.sh)",
-      "Bash(~/.claude/scripts/clean-claude-mcp-cache.sh --help)"
+      "Bash(~/.claude/scripts/clean-claude-mcp-cache.sh --help)",
+      "Bash(jar tf *)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/jar tf *)",
+      "Read(//tmp/**)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/jar xf *)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p org/springaicommunity/mcp/annotation/McpProgress.class)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p org/springaicommunity/mcp/annotation/McpProgressToken.class)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p org/springaicommunity/mcp/method/progress/SyncMcpProgressMethodCallback.class)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p org/springaicommunity/mcp/method/progress/AbstractMcpProgressMethodCallback.class)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p org/springaicommunity/mcp/method/tool/AbstractMcpToolMethodCallback.class)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p org/springaicommunity/mcp/method/tool/AbstractSyncMcpToolMethodCallback.class)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p -c org/springaicommunity/mcp/method/tool/SyncMcpToolMethodCallback.class)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p 'io/modelcontextprotocol/spec/McpSchema$ProgressNotification.class')",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p 'io/modelcontextprotocol/spec/McpSchema$CallToolRequest.class')"
     ]
   }
 }
