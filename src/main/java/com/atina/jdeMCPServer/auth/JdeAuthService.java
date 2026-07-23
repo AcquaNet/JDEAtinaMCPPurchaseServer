@@ -6,6 +6,8 @@ import com.atina.jdeMCPServer.identity.UnmappedIdentityException;
 import com.atina.jdeMCPServer.security.AuthenticatedJdeIdentity;
 import com.atina.jdeMCPServer.vault.AtinaSessionVault;
 import com.atina.jdeMCPServer.vault.VaultUnavailableException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +17,7 @@ import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.util.Base64;
 import java.util.Optional;
 
 @Service
@@ -39,19 +42,25 @@ public class JdeAuthService {
     private final JdeSessionCache sessionCache;
     private final AtinaSessionVault atinaSessionVault;
     private final AtinaSessionSource atinaSessionSource;
+    private final ObjectMapper objectMapper;
+    private final String addressBookClaim;
 
     public JdeAuthService(JdeTokenStore tokenStore,
                           AuthenticatedJdeIdentity authenticatedIdentity,
                           IdentityResolver identityResolver,
                           JdeSessionCache sessionCache,
                           AtinaSessionVault atinaSessionVault,
-                          @Value("${jde.atina.session-source:claim}") String atinaSessionSource) {
+                          ObjectMapper objectMapper,
+                          @Value("${jde.atina.session-source:claim}") String atinaSessionSource,
+                          @Value("${jde.atina.address-book-claim:addressBookNumber}") String addressBookClaim) {
         this.tokenStore = tokenStore;
         this.authenticatedIdentity = authenticatedIdentity;
         this.identityResolver = identityResolver;
         this.sessionCache = sessionCache;
         this.atinaSessionVault = atinaSessionVault;
+        this.objectMapper = objectMapper;
         this.atinaSessionSource = AtinaSessionSource.parse(atinaSessionSource);
+        this.addressBookClaim = addressBookClaim;
         log.info("Fuente del token de sesión Atina (jde.atina.session-source): {}", this.atinaSessionSource);
     }
 
@@ -121,6 +130,39 @@ public class JdeAuthService {
                     "Sesión JDE no encontrada para esta sesión. " +
                             "Por favor autentícate usando el tool 'jde_login' con tu usuario y contraseña JDE.");
         }
+    }
+
+    /**
+     * Address book number (entityId) del aprobador logueado, usado por las
+     * operaciones BSSV de aprobación de purchase orders (approver.entityId /
+     * approverAddressNumber). Viaja como claim (nombre configurable via
+     * jde.atina.address-book-claim) dentro del propio token de sesión JDE
+     * devuelto por {@link #getOrCreateToken()} -- se decodifica el payload
+     * del JWT sin verificar firma, igual que hace JdeTokenStore con "exp".
+     */
+    public long getApproverAddressBookNumber() {
+        String token = getOrCreateToken();
+
+        JsonNode claims;
+        try {
+            String[] parts = token.split("\\.");
+            if (parts.length < 2) {
+                throw new IllegalArgumentException("El token de sesión JDE no tiene formato de JWT");
+            }
+            byte[] payloadBytes = Base64.getUrlDecoder().decode(parts[1]);
+            claims = objectMapper.readTree(payloadBytes);
+        } catch (Exception e) {
+            throw new JdeSessionNotFoundException(
+                    "No se pudo leer el token de sesión JDE para obtener el address book number del aprobador.");
+        }
+
+        JsonNode claim = claims.get(addressBookClaim);
+        if (claim == null || claim.isNull()) {
+            throw new JdeSessionNotFoundException(
+                    "El token de sesión JDE no incluye el claim '" + addressBookClaim + "' con el address book " +
+                            "number del aprobador. Verificar que Atina lo esté emitiendo en el token de sesión.");
+        }
+        return claim.asLong();
     }
 
     /**
