@@ -16,9 +16,11 @@ public class JdeSalesOrderTools {
     private static final Logger log = LoggerFactory.getLogger(JdeSalesOrderTools.class);
 
     private final JdeSalesOrderClient soClient;
+    private final McpProgressNotifications progressNotifications;
 
-    public JdeSalesOrderTools(JdeSalesOrderClient soClient) {
+    public JdeSalesOrderTools(JdeSalesOrderClient soClient, McpProgressNotifications progressNotifications) {
         this.soClient = soClient;
+        this.progressNotifications = progressNotifications;
     }
 
     // =========================================================================
@@ -78,7 +80,7 @@ public class JdeSalesOrderTools {
         String name = entityName.trim();
         log.info("Looking up customers by name '{}'", name);
 
-        McpProgressNotifications.send(exchange, meta, 0, null,
+        progressNotifications.send(exchange, meta, 0, null,
                 "Buscando clientes en JDE, puede tardar unos segundos...");
 
         try {
@@ -171,7 +173,7 @@ public class JdeSalesOrderTools {
 
         log.info("Requesting customer detail for entityId {}", entityId);
 
-        McpProgressNotifications.send(exchange, meta, 0, null,
+        progressNotifications.send(exchange, meta, 0, null,
                 "Consultando el detalle del cliente en JDE, puede tardar unos segundos...");
 
         try {

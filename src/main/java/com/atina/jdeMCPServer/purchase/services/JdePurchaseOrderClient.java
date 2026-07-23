@@ -1,6 +1,7 @@
 package com.atina.jdeMCPServer.purchase.services;
 
 import com.atina.jdeMCPServer.auth.JdeAuthService;
+import com.atina.jdeMCPServer.gateway.RequestCoalescer;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -51,6 +52,7 @@ public class JdePurchaseOrderClient {
     private final JdeAuthService authService;
     private final ObjectMapper objectMapper;
     private final PendingPurchaseOrderStore pendingOrderStore;
+    private final RequestCoalescer requestCoalescer;
     private final String gatewayBaseUrl;
     private final String gatewayTransactionId;
     private final String defaultOrderTypeCode;
@@ -63,6 +65,7 @@ public class JdePurchaseOrderClient {
             JdeAuthService authService,
             ObjectMapper objectMapper,
             PendingPurchaseOrderStore pendingOrderStore,
+            RequestCoalescer requestCoalescer,
             @Value("${jde.atina.gateway.base-url}") String gatewayBaseUrl,
             @Value("${jde.atina.gateway.timeout-minutes:10}") int gatewayTimeoutMinutes,
             @Value("${jde.atina.gateway.transaction-id:0}") String gatewayTransactionId,
@@ -78,6 +81,7 @@ public class JdePurchaseOrderClient {
         this.authService = authService;
         this.objectMapper = objectMapper;
         this.pendingOrderStore = pendingOrderStore;
+        this.requestCoalescer = requestCoalescer;
         this.gatewayBaseUrl = gatewayBaseUrl;
         this.gatewayTransactionId = gatewayTransactionId;
         this.defaultOrderTypeCode = defaultOrderTypeCode;
@@ -266,7 +270,25 @@ public class JdePurchaseOrderClient {
     // =========================================================================
     // Gateway de Atina - helper comun
     // =========================================================================
+    // Coalescea llamadas identicas concurrentes (mismo operacionKey + mismo body):
+    // si un cliente MCP cancela por timeout y reintenta la misma tool call mientras
+    // la anterior sigue esperando a JDE, el reintento espera el resultado de la
+    // llamada en curso en vez de disparar una nueva contra el Gateway de Atina.
     private JsonNode executeGatewayOperation(String operacionKey, Map<String, Object> value) {
+        return requestCoalescer.execute(
+                coalesceKey(operacionKey, value),
+                () -> doExecuteGatewayOperation(operacionKey, value));
+    }
+
+    private String coalesceKey(String operacionKey, Map<String, Object> value) {
+        try {
+            return operacionKey + "|" + objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            return operacionKey + "|" + value;
+        }
+    }
+
+    private JsonNode doExecuteGatewayOperation(String operacionKey, Map<String, Object> value) {
 
         String token = authService.getOrCreateToken();
 

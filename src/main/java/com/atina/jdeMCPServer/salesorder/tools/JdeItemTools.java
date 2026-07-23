@@ -19,14 +19,17 @@ public class JdeItemTools {
     private final JdeSalesOrderClient soClient;
     private final String defaultUnitOfMeasure;
     private final String defaultProcessingVersion;
+    private final McpProgressNotifications progressNotifications;
 
     public JdeItemTools(
             JdeSalesOrderClient soClient,
             @Value("${jde.pricing.default-unit-of-measure:EA}") String defaultUnitOfMeasure,
-            @Value("${jde.pricing.default-processing-version:ZJDE0001}") String defaultProcessingVersion) {
+            @Value("${jde.pricing.default-processing-version:ZJDE0001}") String defaultProcessingVersion,
+            McpProgressNotifications progressNotifications) {
         this.soClient = soClient;
         this.defaultUnitOfMeasure = defaultUnitOfMeasure;
         this.defaultProcessingVersion = defaultProcessingVersion;
+        this.progressNotifications = progressNotifications;
     }
 
     // =========================================================================
@@ -85,7 +88,7 @@ public class JdeItemTools {
         String searchText = itemSearchText.trim();
         log.info("Searching items by text '{}'", searchText);
 
-        McpProgressNotifications.send(exchange, meta, 0, null,
+        progressNotifications.send(exchange, meta, 0, null,
                 "Buscando artículos en JDE, puede tardar unos segundos...");
 
         try {
@@ -214,7 +217,7 @@ public class JdeItemTools {
         log.info("Requesting item price for itemId {} / entityId {} / businessUnit '{}' (availability={})",
                 itemId, entityId, businessUnit, withAvailability);
 
-        McpProgressNotifications.send(exchange, meta, 0, null,
+        progressNotifications.send(exchange, meta, 0, null,
                 "Consultando precio en JDE, puede tardar unos segundos...");
 
         try {

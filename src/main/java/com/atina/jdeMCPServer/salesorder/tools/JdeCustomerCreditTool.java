@@ -16,9 +16,11 @@ public class JdeCustomerCreditTool {
     private static final Logger log = LoggerFactory.getLogger(JdeCustomerCreditTool.class);
 
     private final JdeSalesOrderClient soClient;
+    private final McpProgressNotifications progressNotifications;
 
-    public JdeCustomerCreditTool(JdeSalesOrderClient soClient) {
+    public JdeCustomerCreditTool(JdeSalesOrderClient soClient, McpProgressNotifications progressNotifications) {
         this.soClient = soClient;
+        this.progressNotifications = progressNotifications;
     }
 
     @McpTool(
@@ -59,7 +61,7 @@ public class JdeCustomerCreditTool {
 
         log.info("Requesting credit info for customer {}", customerNumber);
 
-        McpProgressNotifications.send(exchange, meta, 0, null,
+        progressNotifications.send(exchange, meta, 0, null,
                 "Consultando crédito del cliente en JDE, puede tardar unos segundos...");
 
         try {

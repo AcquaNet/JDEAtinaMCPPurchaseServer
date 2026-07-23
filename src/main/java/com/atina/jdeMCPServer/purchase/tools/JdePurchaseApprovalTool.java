@@ -20,13 +20,16 @@ public class JdePurchaseApprovalTool {
     private final JdePurchaseOrderClient jdeClient;
     private final RealmRoleGuard roleGuard;
     private final String approverRole;
+    private final McpProgressNotifications progressNotifications;
 
     public JdePurchaseApprovalTool(JdePurchaseOrderClient jdeClient,
                                    RealmRoleGuard roleGuard,
-                                   @Value("${jde.mcp.security.approver-role}") String approverRole) {
+                                   @Value("${jde.mcp.security.approver-role}") String approverRole,
+                                   McpProgressNotifications progressNotifications) {
         this.jdeClient = jdeClient;
         this.roleGuard = roleGuard;
         this.approverRole = approverRole;
+        this.progressNotifications = progressNotifications;
     }
 
     // =========================
@@ -93,7 +96,7 @@ public class JdePurchaseApprovalTool {
             McpSyncServerExchange exchange
     ) {
 
-        McpProgressNotifications.send(exchange, meta, 0, null,
+        progressNotifications.send(exchange, meta, 0, null,
                 "Consultando órdenes pendientes en JDE, puede tardar unos segundos...");
 
         var orders = jdeClient.getPendingPurchaseOrders(limit, orderTypeCode, businessUnitCode, statusCodeNext);
@@ -213,7 +216,7 @@ public class JdePurchaseApprovalTool {
                     documentOrderInvoiceNumber,
                     documentCompanyKeyOrderNo,
                     documentSuffix,
-                    progressMessage -> McpProgressNotifications.send(exchange, meta, 0, null, progressMessage)
+                    progressMessage -> progressNotifications.send(exchange, meta, 0, null, progressMessage)
             );
 
             // 'detail' se asume como String (JSON o texto) que el tool devuelve al modelo
@@ -383,7 +386,7 @@ public class JdePurchaseApprovalTool {
             safeRemark = safeRemark.substring(0, 30);
         }
 
-        McpProgressNotifications.send(exchange, meta, 0, null,
+        progressNotifications.send(exchange, meta, 0, null,
                 "Enviando la decisión a JDE, puede tardar unos segundos...");
 
         try {

@@ -1,6 +1,9 @@
 package com.atina.jdeMCPServer.salesorder.services;
 
 import com.atina.jdeMCPServer.auth.JdeAuthService;
+import com.atina.jdeMCPServer.gateway.RequestCoalescer;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,12 +40,16 @@ public class JdeSalesOrderClient {
     private final WebClient webClient;
     private final WebClient gatewayWebClient;
     private final JdeAuthService authService;
+    private final ObjectMapper objectMapper;
+    private final RequestCoalescer requestCoalescer;
     private final String baseUrl;
     private final String gatewayBaseUrl;
     private final String gatewayTransactionId;
 
     public JdeSalesOrderClient(
             JdeAuthService authService,
+            ObjectMapper objectMapper,
+            RequestCoalescer requestCoalescer,
             @Value("${jde.so.api.base-url}") String baseUrl,
             @Value("${jde.atina.gateway.base-url}") String gatewayBaseUrl,
             @Value("${jde.atina.gateway.timeout-minutes:10}") int gatewayTimeoutMinutes,
@@ -55,12 +62,24 @@ public class JdeSalesOrderClient {
                 HttpClient.create().responseTimeout(Duration.ofMinutes(gatewayTimeoutMinutes))
         )).build();
         this.authService = authService;
+        this.objectMapper = objectMapper;
+        this.requestCoalescer = requestCoalescer;
         this.baseUrl = baseUrl;
         this.gatewayBaseUrl = gatewayBaseUrl;
         this.gatewayTransactionId = gatewayTransactionId;
     }
 
+    // Coalescea llamadas identicas concurrentes (mismo customerNumber): si un cliente
+    // MCP cancela por timeout y reintenta la misma tool call mientras la anterior
+    // sigue esperando a Mulesoft, el reintento espera el resultado en curso en vez
+    // de disparar una llamada nueva.
     public String getCustomerCreditFinancialInfo(int customerNumber) {
+        return requestCoalescer.execute(
+                "getCustomerCreditFinancialInfo|" + customerNumber,
+                () -> doGetCustomerCreditFinancialInfo(customerNumber));
+    }
+
+    private String doGetCustomerCreditFinancialInfo(int customerNumber) {
 
         String token = authService.getOrCreateToken();
 
@@ -217,6 +236,20 @@ public class JdeSalesOrderClient {
      * refresca, así que aquí solo se propaga el Bearer de la sesión vigente.
      */
     private String executeGatewayOperation(String operacionKey, Map<String, Object> value) {
+        return requestCoalescer.execute(
+                coalesceKey(operacionKey, value),
+                () -> doExecuteGatewayOperation(operacionKey, value));
+    }
+
+    private String coalesceKey(String operacionKey, Map<String, Object> value) {
+        try {
+            return operacionKey + "|" + objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            return operacionKey + "|" + value;
+        }
+    }
+
+    private String doExecuteGatewayOperation(String operacionKey, Map<String, Object> value) {
 
         String token = authService.getOrCreateToken();
 
