@@ -1,8 +1,11 @@
 package com.atina.jdeMCPServer.salesorder.tools;
 
+import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
 import com.atina.jdeMCPServer.salesorder.services.JdeSalesOrderClient;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springaicommunity.mcp.annotation.McpMeta;
 import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.beans.factory.annotation.Value;
@@ -71,7 +74,9 @@ public class JdeItemTools {
             @McpToolParam(
                     description = "Item name/description or a fragment of it, e.g. 'Bike, Mountain Red'. Partial match; may return several items."
             )
-            String itemSearchText
+            String itemSearchText,
+            McpMeta meta,
+            McpSyncServerExchange exchange
     ) {
         if (itemSearchText == null || itemSearchText.isBlank()) {
             return "Please provide an item name (or part of it) to search for.";
@@ -79,6 +84,9 @@ public class JdeItemTools {
 
         String searchText = itemSearchText.trim();
         log.info("Searching items by text '{}'", searchText);
+
+        McpProgressNotifications.send(exchange, meta, 0, null,
+                "Buscando artículos en JDE, puede tardar unos segundos...");
 
         try {
             String response = soClient.searchItems(searchText);
@@ -176,7 +184,9 @@ public class JdeItemTools {
             @McpToolParam(description = "JDE processing version, e.g. 'ZJDE0001'. Optional; if omitted, a server default is used.")
             String processingVersion,
             @McpToolParam(description = "'Y' to also return warehouse availability, 'N' for price only. Optional, defaults to 'N'.")
-            String returnAvailability
+            String returnAvailability,
+            McpMeta meta,
+            McpSyncServerExchange exchange
     ) {
         if (entityId == null || entityId <= 0) {
             return "Please provide a valid customer AB Number (positive integer). "
@@ -203,6 +213,9 @@ public class JdeItemTools {
 
         log.info("Requesting item price for itemId {} / entityId {} / businessUnit '{}' (availability={})",
                 itemId, entityId, businessUnit, withAvailability);
+
+        McpProgressNotifications.send(exchange, meta, 0, null,
+                "Consultando precio en JDE, puede tardar unos segundos...");
 
         try {
             String response = withAvailability

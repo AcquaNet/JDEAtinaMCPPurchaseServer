@@ -1,8 +1,11 @@
 package com.atina.jdeMCPServer.salesorder.tools;
 
+import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
 import com.atina.jdeMCPServer.salesorder.services.JdeSalesOrderClient;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springaicommunity.mcp.annotation.McpMeta;
 import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
@@ -46,13 +49,18 @@ public class JdeCustomerCreditTool {
     )
     public String getCustomerCreditInfo(
             @McpToolParam(description = "JDE customer number (address book number), e.g. 4242")
-            Integer customerNumber
+            Integer customerNumber,
+            McpMeta meta,
+            McpSyncServerExchange exchange
     ) {
         if (customerNumber == null || customerNumber <= 0) {
             return "Please provide a valid customer number (positive integer).";
         }
 
         log.info("Requesting credit info for customer {}", customerNumber);
+
+        McpProgressNotifications.send(exchange, meta, 0, null,
+                "Consultando crédito del cliente en JDE, puede tardar unos segundos...");
 
         try {
             String response = soClient.getCustomerCreditFinancialInfo(customerNumber);

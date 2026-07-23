@@ -66,7 +66,13 @@
       "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p org/springaicommunity/mcp/method/tool/AbstractSyncMcpToolMethodCallback.class)",
       "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p -c org/springaicommunity/mcp/method/tool/SyncMcpToolMethodCallback.class)",
       "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p 'io/modelcontextprotocol/spec/McpSchema$ProgressNotification.class')",
-      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p 'io/modelcontextprotocol/spec/McpSchema$CallToolRequest.class')"
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p 'io/modelcontextprotocol/spec/McpSchema$CallToolRequest.class')",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p -c org/springaicommunity/mcp/method/tool/AbstractMcpToolMethodCallback.class)",
+      "Bash(rm -rf /tmp/schema_check)",
+      "Bash(mkdir /tmp/schema_check)",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p -c 'io/modelcontextprotocol/spec/McpSchema$CallToolRequest.class')",
+      "Bash(~/.sdkman/candidates/java/25.0.1-tem/bin/javap -p org/springaicommunity/mcp/annotation/McpMeta.class)",
+      "Bash(ps -p 70683 -o pid,ppid,etime,command)"
     ]
   }
 }

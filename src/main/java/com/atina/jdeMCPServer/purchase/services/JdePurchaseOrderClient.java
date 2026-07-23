@@ -24,6 +24,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 @Service
 public class JdePurchaseOrderClient {
@@ -174,7 +175,8 @@ public class JdePurchaseOrderClient {
     public String getPurchaseOrderDetail(String documentOrderTypeCode,
                                           Integer documentOrderInvoiceNumber,
                                           String documentCompanyKeyOrderNo,
-                                          String documentSuffix) {
+                                          String documentSuffix,
+                                          Consumer<String> onProgress) {
 
         Map<String, Object> purchaseOrderKey = new LinkedHashMap<>();
         purchaseOrderKey.put("documentTypeCode", documentOrderTypeCode);
@@ -187,6 +189,7 @@ public class JdePurchaseOrderClient {
         Map<String, Object> headerValue = new LinkedHashMap<>();
         headerValue.put("header", header);
 
+        notifyProgress(onProgress, "Consultando cabecera de la orden en JDE...");
         JsonNode headerLista = executeGatewayOperation(OP_GET_PURCHASE_ORDER_V2, headerValue);
         JsonNode showPurchaseOrder = headerLista.path("showPurchaseOrder");
 
@@ -197,6 +200,7 @@ public class JdePurchaseOrderClient {
         detailValue.put("documentSuffix", documentSuffix);
         detailValue.put("statusCodeNext", defaultStatusCodeNext);
 
+        notifyProgress(onProgress, "Consultando el detalle de líneas en JDE...");
         JsonNode detailLista = executeGatewayOperation(OP_GET_PURCHASE_ORDER_DETAIL, detailValue);
         JsonNode detailResults = detailLista.path("purchaseOrderDetailForApproverResults");
 
@@ -205,6 +209,12 @@ public class JdePurchaseOrderClient {
         combined.set("detail", detailResults);
 
         return writeValueAsString(combined, "el detalle de la orden de compra");
+    }
+
+    private static void notifyProgress(Consumer<String> onProgress, String message) {
+        if (onProgress != null) {
+            onProgress.accept(message);
+        }
     }
 
     // =========================================================================

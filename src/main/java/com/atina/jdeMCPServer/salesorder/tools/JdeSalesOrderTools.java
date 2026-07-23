@@ -1,8 +1,11 @@
 package com.atina.jdeMCPServer.salesorder.tools;
 
+import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
 import com.atina.jdeMCPServer.salesorder.services.JdeSalesOrderClient;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springaicommunity.mcp.annotation.McpMeta;
 import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
@@ -64,7 +67,9 @@ public class JdeSalesOrderTools {
             @McpToolParam(
                     description = "Customer name or a fragment of it, e.g. 'Capital'. Partial match; may return several customers."
             )
-            String entityName
+            String entityName,
+            McpMeta meta,
+            McpSyncServerExchange exchange
     ) {
         if (entityName == null || entityName.isBlank()) {
             return "Please provide a customer name (or part of it) to search for.";
@@ -72,6 +77,9 @@ public class JdeSalesOrderTools {
 
         String name = entityName.trim();
         log.info("Looking up customers by name '{}'", name);
+
+        McpProgressNotifications.send(exchange, meta, 0, null,
+                "Buscando clientes en JDE, puede tardar unos segundos...");
 
         try {
             String response = soClient.lookupAddressBookByName(name);
@@ -152,7 +160,9 @@ public class JdeSalesOrderTools {
             @McpToolParam(
                     description = "JDE customer Address Book number (AB Number / entityId), e.g. 4242."
             )
-            Integer entityId
+            Integer entityId,
+            McpMeta meta,
+            McpSyncServerExchange exchange
     ) {
         if (entityId == null || entityId <= 0) {
             return "Please provide a valid customer AB Number (positive integer). "
@@ -160,6 +170,9 @@ public class JdeSalesOrderTools {
         }
 
         log.info("Requesting customer detail for entityId {}", entityId);
+
+        McpProgressNotifications.send(exchange, meta, 0, null,
+                "Consultando el detalle del cliente en JDE, puede tardar unos segundos...");
 
         try {
             String response = soClient.getCustomerDetail(entityId);

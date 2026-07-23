@@ -1,9 +1,12 @@
 package com.atina.jdeMCPServer.purchase.tools;
 
+import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
 import com.atina.jdeMCPServer.purchase.services.JdePurchaseOrderClient;
 import com.atina.jdeMCPServer.security.RealmRoleGuard;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springaicommunity.mcp.annotation.McpMeta;
 import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.beans.factory.annotation.Value;
@@ -85,8 +88,13 @@ public class JdePurchaseApprovalTool {
                     description = "JDE next status code of the approval workflow, e.g. '230'. Optional: if not provided, a configured default is used.",
                     required = false
             )
-            String statusCodeNext
+            String statusCodeNext,
+            McpMeta meta,
+            McpSyncServerExchange exchange
     ) {
+
+        McpProgressNotifications.send(exchange, meta, 0, null,
+                "Consultando órdenes pendientes en JDE, puede tardar unos segundos...");
 
         var orders = jdeClient.getPendingPurchaseOrders(limit, orderTypeCode, businessUnitCode, statusCodeNext);
 
@@ -184,7 +192,9 @@ public class JdePurchaseApprovalTool {
             @McpToolParam(
                     description = "JDE documentSuffix, for example '000'."
             )
-            String documentSuffix
+            String documentSuffix,
+            McpMeta meta,
+            McpSyncServerExchange exchange
     ) {
 
         log.info(
@@ -194,12 +204,16 @@ public class JdePurchaseApprovalTool {
         );
 
         try {
-            // Llamada real al microservicio a través del cliente
+            // Llamada real al microservicio a través del cliente. El detalle combina dos
+            // operaciones BSSV secuenciales (header + line items); se reporta progreso
+            // entre ambas para que un cliente MCP que siga el progressToken no timeoutee
+            // a mitad de camino.
             var detail = jdeClient.getPurchaseOrderDetail(
                     documentOrderTypeCode,
                     documentOrderInvoiceNumber,
                     documentCompanyKeyOrderNo,
-                    documentSuffix
+                    documentSuffix,
+                    progressMessage -> McpProgressNotifications.send(exchange, meta, 0, null, progressMessage)
             );
 
             // 'detail' se asume como String (JSON o texto) que el tool devuelve al modelo
@@ -269,7 +283,9 @@ public class JdePurchaseApprovalTool {
             @McpToolParam(description = "JDE documentSuffix, e.g. '000'.")
             String documentSuffix,
             @McpToolParam(description = "Short approval remark (will be truncated to 30 characters).")
-            String remark
+            String remark,
+            McpMeta meta,
+            McpSyncServerExchange exchange
     ) {
         return processPurchaseOrderInternal(
                 "A",
@@ -277,7 +293,9 @@ public class JdePurchaseApprovalTool {
                 documentOrderInvoiceNumber,
                 documentCompanyKeyOrderNo,
                 documentSuffix,
-                remark
+                remark,
+                meta,
+                exchange
         );
     }
 
@@ -314,7 +332,9 @@ public class JdePurchaseApprovalTool {
             @McpToolParam(description = "JDE documentSuffix, e.g. '000'.")
             String documentSuffix,
             @McpToolParam(description = "Short rejection remark (will be truncated to 30 characters).")
-            String remark
+            String remark,
+            McpMeta meta,
+            McpSyncServerExchange exchange
     ) {
         return processPurchaseOrderInternal(
                 "R",
@@ -322,7 +342,9 @@ public class JdePurchaseApprovalTool {
                 documentOrderInvoiceNumber,
                 documentCompanyKeyOrderNo,
                 documentSuffix,
-                remark
+                remark,
+                meta,
+                exchange
         );
     }
 
@@ -335,7 +357,9 @@ public class JdePurchaseApprovalTool {
             Integer documentOrderInvoiceNumber,
             String documentCompanyKeyOrderNo,
             String documentSuffix,
-            String remark
+            String remark,
+            McpMeta meta,
+            McpSyncServerExchange exchange
     ) {
 
         // Autorización: decidir sobre una OC exige el rol de aprobador en Keycloak.
@@ -358,6 +382,9 @@ public class JdePurchaseApprovalTool {
         if (safeRemark.length() > 30) {
             safeRemark = safeRemark.substring(0, 30);
         }
+
+        McpProgressNotifications.send(exchange, meta, 0, null,
+                "Enviando la decisión a JDE, puede tardar unos segundos...");
 
         try {
             String response = jdeClient.processPurchaseOrder(
