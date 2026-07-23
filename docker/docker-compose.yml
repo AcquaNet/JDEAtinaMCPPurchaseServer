@@ -120,9 +120,11 @@ services:
       BAO_ADDR: ${BAO_ADDR:-http://openbao:8200}
       BAO_TOKEN: ${BAO_TOKEN:-dev-only-root-token}
       ATINA_JWT_SECRET: ${ATINA_JWT_SECRET:-}
-      # Mulesoft y el Gateway de Atina NO son parte de este compose (corren en otro
-      # host/servicio). host.docker.internal + extra_hosts (abajo) resuelve al host
-      # Docker si Mulesoft/Gateway corren en la misma maquina que este compose.
+      # El Gateway de Atina (TODAS las operaciones de negocio) y el legacy
+      # "Mulesoft" (solo jde_get_customer_credit_info + login manual, ver
+      # docker/.env) NO son parte de este compose -- corren en otro docker
+      # compose / host. host.docker.internal + extra_hosts (abajo) resuelve al
+      # host Docker si corren en la misma maquina que este compose.
       JDE_API_BASE_URL: ${JDE_MULESOFT_BASE_URL:-http://host.docker.internal:8089/api}
       JDE_SO_API_BASE_URL: ${JDE_MULESOFT_BASE_URL:-http://host.docker.internal:8089/api}
       JDE_ATINA_GATEWAY_BASE_URL: ${JDE_ATINA_GATEWAY_BASE_URL:-http://host.docker.internal:8086}

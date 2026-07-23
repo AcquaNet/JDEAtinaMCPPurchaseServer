@@ -101,7 +101,12 @@
       "Bash(./scripts/package.sh *)",
       "Bash(unzip -l test-package.zip)",
       "Bash(curl -s http://localhost:18099/.well-known/oauth-protected-resource)",
-      "Bash(curl -s http://localhost:18099/.well-known/oauth-protected-resource -H 'X-Forwarded-Proto: https' -H 'X-Forwarded-Host: 77f1-52-26-62-241.ngrok-free.app')"
+      "Bash(curl -s http://localhost:18099/.well-known/oauth-protected-resource -H 'X-Forwarded-Proto: https' -H 'X-Forwarded-Host: 77f1-52-26-62-241.ngrok-free.app')",
+      "Bash(curl -s http://localhost:8080/.well-known/oauth-protected-resource)",
+      "Bash(curl -s -i -X POST http://localhost:8080/mcp -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0\"}}}')",
+      "Bash(npx -y mcp-remote --help)",
+      "Bash(npm view *)",
+      "Bash(env)"
     ]
   }
 }
