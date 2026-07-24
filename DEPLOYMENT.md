@@ -233,8 +233,37 @@ el login no falle con "invalid redirect_uri"):
 3. Guardar, y exportar el realm para no perder el cambio si se recrea el
    contenedor (ver [Keycloak: exportar/importar](#keycloak-exportarimportar-el-realm)).
 
-**Paso 5 — Conectar Claude**: pegar `https://<url-de-la-terminal-b>/mcp`
-como URL del servidor MCP en Claude Desktop/Claude.ai, y completar el login.
+**Paso 5 — Conectar Claude Desktop**: Claude Desktop **no acepta** la forma
+`url` + `headers` directa (config remota pura) — hay que usar `command` +
+`args`, que lanza `mcp-remote` (bridge stdio↔HTTP) como proceso local. Editar
+`claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "jde-atina": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@latest",
+        "https://<url-de-la-terminal-b>/mcp",
+        "--static-oauth-client-info",
+        "{ \"client_id\": \"atina-mcp-server\" }"
+      ]
+    }
+  }
+}
+```
+
+El flag `--static-oauth-client-info` es clave: sin él, `mcp-remote` intenta
+**Dynamic Client Registration** (registrar un client nuevo contra Keycloak) y
+la política `Allowed Client Scopes` del realm lo rechaza
+(`InsufficientScopeError`, ver [Troubleshooting](#troubleshooting)). Con este
+flag, usa directo el client `atina-mcp-server` que ya existe en el realm y
+hace el login real (Authorization Code + PKCE, browser) sin registrar nada.
+
+Reiniciar Claude Desktop del todo (Quit, no solo cerrar la ventana) después de
+editar el config, y completar el login la primera vez que te lo pida.
 
 ### Qué se repite en cada demo (a partir de acá)
 
@@ -243,12 +272,17 @@ Solo esto — todo lo del setup inicial queda guardado:
 1. Abrir las dos terminales (Paso 2) y dejarlas corriendo.
 2. `docker compose --profile dev up -d` (o correr el MCP Server desde IntelliJ).
 3. La URL de la **Terminal B** (mcp-server) cambia cada vez — copiarla y
-   actualizarla en Claude. La de la **Terminal A** (keycloak) no cambia nunca
-   (dominio fijo del Paso 1).
+   actualizarla dentro de `args` en `claude_desktop_config.json` (Paso 5), y
+   reiniciar Claude Desktop. La de la **Terminal A** (keycloak) no cambia
+   nunca (dominio fijo del Paso 1).
 
-> **Si en vez de la demo querés probar tools sin login interactivo**, usá el
-> bypass de token de Atina (HS256, ver AUTHENTICATION.md) — no necesita ngrok
-> ni Keycloak en absoluto.
+> **Si en vez de la demo querés probar tools sin login interactivo**, cambiá
+> el `--static-oauth-client-info ...` del config de arriba por
+> `--header "Authorization: Bearer <token-de-atina>"` con un token real de
+> Atina (HS256, ver AUTHENTICATION.md) — no necesita Keycloak en absoluto (sí
+> necesita igual el túnel de ngrok de la Terminal B para llegar al MCP
+> Server). Útil para validar rápido que el server/túnel responden, sin pasar
+> por el login.
 
 > **Alternativa si la demo puede esperar**: si para entonces ya tenés Digital
 > Ocean levantado (Parte 4), usalo directo — dominios reales, sin túneles que
@@ -269,8 +303,8 @@ cualquier otro registry — `docker login` primero):
 
 ```bash
 # Desde la raíz del repo
-docker build -t <tu-usuario-dockerhub>/jde-mcp-server:dev .
-docker push <tu-usuario-dockerhub>/jde-mcp-server:dev
+docker compose --profile dev up -d --build mcp-server
+docker push 92455890/jde-mcp-server:latest
 ```
 
 > Esto arma la imagen para la arquitectura de **esta** máquina (ej. ARM si tu
@@ -492,6 +526,8 @@ Para no reconfigurar Keycloak a mano cada vez que se levanta un ambiente nuevo:
 | Claude no puede completar el login con ngrok | Redirect URI no autorizado, o `KC_HOSTNAME`/`MCP_KEYCLOAK_ISSUER_URI` no coinciden | Ver Parte 2, Paso 3 y 4 |
 | `mcp-remote`: `Protected resource http://...` does not match expected `https://...` | El MCP Server no confía en `X-Forwarded-Proto` del proxy (ngrok/Caddy) y arma la URL como `http://` en vez de `https://` | Ya corregido: `server.forward-headers-strategy=framework` en `application.properties`. Si ves esto, actualizá el código (`git pull`) y reconstruí: `docker compose --profile dev build mcp-server` (o reiniciar desde el IDE) |
 | `mcp-remote`: `Discovered authorization server: http://keycloak:8080/...` | El MCP Server todavía apunta al issuer interno de Docker, no al túnel ngrok de Keycloak | Completar Parte 2, Paso 3 (`KC_HOSTNAME`/`MCP_KEYCLOAK_ISSUER_URI` = URL fija de ngrok) y recrear `keycloak` |
+| `mcp-remote`: `InsufficientScopeError: Policy 'Allowed Client Scopes' rejected request to client-registration service` | `mcp-remote` no tiene un client_id fijo configurado y por default intenta Dynamic Client Registration contra Keycloak, que el realm rechaza | Agregar `--static-oauth-client-info '{ "client_id": "atina-mcp-server" }'` al `args` del config de Claude Desktop (ver Parte 2, Paso 5) — usa el client que ya existe en vez de registrar uno nuevo |
+| Token de Atina real da `401` en Docker/ngrok pero `200` en una instancia local | `ATINA_JWT_SECRET` distinto entre `docker/.env` y el entorno donde corre la instancia local (firma HS256 no matchea) | Poner el mismo `ATINA_JWT_SECRET` real (el del microservicio de Atina) en `docker/.env` y recrear `mcp-server` |
 | Caddy no obtiene certificado (prod) | DNS no resuelve al droplet, o puertos 80/443 no accesibles desde internet | `dig +short jdemcp-atina-connection.com`, `curl http://jdemcp-atina-connection.com` desde otra máquina, `docker compose ... logs caddy` |
 | Todos los tokens de Keycloak son rechazados (401) | `MCP_KEYCLOAK_ISSUER_URI` no coincide con `KC_HOSTNAME` | Revisar que ambos sean la misma URL pública (ngrok o dominio real) |
 | `jde.vault.addr`/`jde.vault.token` fallan | `BAO_TOKEN` no seteado, o token de OpenBao expirado/inválido | `docker compose ... logs openbao`; `curl http://127.0.0.1:8200/v1/sys/health` (o por SSH tunnel en prod) |

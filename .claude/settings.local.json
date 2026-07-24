@@ -106,7 +106,10 @@
       "Bash(curl -s -i -X POST http://localhost:8080/mcp -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0\"}}}')",
       "Bash(npx -y mcp-remote --help)",
       "Bash(npm view *)",
-      "Bash(env)"
+      "Bash(env)",
+      "Bash(curl -s \"https://hub.docker.com/v2/repositories/92455890/jde-mcp-server/tags\")",
+      "Bash(curl -s \"https://hub.docker.com/v2/repositories/92455890/jde-mcp-server/tags/latest\")",
+      "Bash(docker buildx *)"
     ]
   }
 }
