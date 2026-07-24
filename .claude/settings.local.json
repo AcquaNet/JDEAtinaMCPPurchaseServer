@@ -112,7 +112,9 @@
       "Bash(docker buildx *)",
       "Bash(curl -s \"https://hub.docker.com/v2/repositories/92455890/jde-mcp-server/tags/1.0.0\")",
       "Bash(ps -o pid,etime,command -p 21896,21893)",
-      "Bash(MCP_IMAGE=92455890/jde-mcp-server:compose-test docker compose --profile dev build --builder multiarch-builder --push mcp-server)"
+      "Bash(MCP_IMAGE=92455890/jde-mcp-server:compose-test docker compose --profile dev build --builder multiarch-builder --push mcp-server)",
+      "Bash(docker image *)",
+      "Bash(MCP_IMAGE=92455890/jde-mcp-server:1.0.0 docker compose --profile dev build --builder multiarch-builder --push mcp-server)"
     ]
   }
 }
