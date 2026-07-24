@@ -301,17 +301,33 @@ tiene el JDK/Maven) y se sube a un registry; la otra PC solo la descarga.
 **1. Build y push de la imagen** (necesitás una cuenta en Docker Hub, o
 cualquier otro registry — `docker login` primero):
 
+> ⚠️ **La imagen tiene que salir multi-arquitectura, siempre.** El servicio
+> `mcp-server` en `docker-compose.yml` ya declara `build.platforms:
+> [linux/amd64, linux/arm64]`, así que `docker compose build` arma para las
+> dos por default — no hace falta pensarlo tag a tag. Esto reemplaza un
+> `docker buildx build --platform ...` a mano que se nos olvidó usar dos
+> veces seguidas (pusheamos solo `arm64`, la arquitectura de esta Mac, y el
+> pull fallaba en Windows/`amd64` con `manifest unknown`). Requiere un
+> builder con driver `docker-container` (no el `desktop-linux` default, que
+> no soporta multi-plataforma) — crearlo una sola vez por máquina:
+> ```bash
+> docker buildx create --name multiarch-builder --driver docker-container
+> ```
+
 ```bash
-# Desde la raíz del repo
-docker compose --profile dev up -d --build mcp-server
-docker push 92455890/jde-mcp-server:latest
+# Desde docker/. MCP_IMAGE define el tag (ver docker/.env); default
+# jde-mcp-server:latest si no está seteada.
+cd docker
+MCP_IMAGE=92455890/jde-mcp-server:TAG \
+  docker compose --profile dev build --builder multiarch-builder --push mcp-server
 ```
 
-> Esto arma la imagen para la arquitectura de **esta** máquina (ej. ARM si tu
-> Mac es Apple Silicon). Si la otra PC es de otra arquitectura (Windows/Linux
-> Intel, por ejemplo), usar `docker buildx build --platform linux/amd64 ...
-> --push` como en la Parte 4 (Paso 1), apuntando a la plataforma de la PC
-> destino.
+Verificar que el push haya quedado multi-arquitectura antes de darlo por
+bueno (debe listar `amd64` y `arm64`, no solo uno):
+
+```bash
+docker buildx imagetools inspect 92455890/jde-mcp-server:TAG
+```
 
 **2. Armar el ZIP con solo lo necesario** (ya hay un script para esto):
 
@@ -383,21 +399,22 @@ Dominio: **`jdemcp-atina-connection.com`** (MCP Server) y
 ### Paso 1 — Build y push de la imagen del MCP Server
 
 > **Mac → Linux**: los droplets "estándar" de Digital Ocean son `linux/amd64`
-> (Intel/AMD), aunque tu Mac sea Apple Silicon (ARM) o Intel. `docker buildx
-> --platform linux/amd64` compila para esa arquitectura sin importar la tuya
-> (usa emulación QEMU si tu Mac no es amd64 nativo -- el build tarda más que en
-> local, pero el resultado corre bien en el droplet). Digital Ocean también
-> ofrece droplets ARM ("Ampere") si en algún momento preferís evitar la
-> emulación buildeando `--platform linux/arm64` nativo desde Apple Silicon,
-> pero no es el default.
+> (Intel/AMD), aunque tu Mac sea Apple Silicon (ARM) o Intel. El `build.platforms`
+> de `docker-compose.yml` ya incluye `linux/amd64` (y de paso `linux/arm64`,
+> por si en algún momento usás un droplet ARM "Ampere" o corrés la imagen en
+> esta misma Mac) -- corre bien en el droplet sin importar la arquitectura de
+> la máquina donde se buildea (usa emulación QEMU si hace falta, tarda más
+> que un build single-arch).
+
+Mismo comando y mismo builder que en la [Parte 3](#parte-3-empaquetar-y-llevar-a-otra-pc)
+(crear el builder una sola vez por máquina si todavía no existe):
 
 ```bash
-# Desde la raíz del repo (no docker/)
-docker buildx create --name multiarch --use    # una sola vez por máquina
+docker buildx create --name multiarch-builder --driver docker-container   # una sola vez
 
-docker buildx build --platform linux/amd64 \
-  -t <tu-usuario-o-registry>/jde-mcp-server:prod \
-  --push .
+cd docker
+MCP_IMAGE=<tu-usuario-o-registry>/jde-mcp-server:prod \
+  docker compose --profile prod build --builder multiarch-builder --push mcp-server
 ```
 
 ### Paso 2 — Preparar la carpeta en el droplet

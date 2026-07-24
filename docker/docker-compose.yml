@@ -104,6 +104,15 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      # Multi-arquitectura: sin esto, "docker compose build"/"up --build" arma
+      # la imagen SOLO para la arquitectura de esta máquina (ej. arm64 en Mac
+      # Apple Silicon), y el pull falla en una PC de otra arquitectura (ej.
+      # Windows/Linux amd64) con "manifest unknown". Requiere un builder con
+      # driver docker-container (ver DEPLOYMENT.md Parte 3, "docker buildx
+      # create --name multiarch-builder --driver docker-container").
+      platforms:
+        - linux/amd64
+        - linux/arm64
     image: ${MCP_IMAGE:-jde-mcp-server:latest}
     container_name: jde-mcp-server
     restart: unless-stopped
