@@ -1,0 +1,993 @@
+{
+  "info": {
+    "_postman_id": "5a190ed2-466b-4b4a-879d-9567d4a0ef47",
+    "name": "ATINA MCP Server - 01 - Local",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "193293",
+    "_collection_link": "https://go.postman.co/collection/193293-5a190ed2-466b-4b4a-879d-9567d4a0ef47?source=collection_link"
+  },
+  "item": [
+    {
+      "name": "01 - Conexión con Token Oath 2.1",
+      "item": [
+        {
+          "name": "02 - MCP - Initialize - Connect with Valid Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  " ",
+                  "pm.test(\"Save Token\", function () {",
+                  "    const sessionId = pm.response.headers.get(\"Mcp-Session-Id\"); ",
+                  "    const responseBody = pm.response.json();",
+                  "    pm.collectionVariables.set(\"mcp_session_id\", sessionId);",
+                  "     console.log(\"Server Info:\", responseBody.result.serverInfo);",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"jsonrpc\": \"2.0\",\n    \"id\": 1,\n    \"method\": \"initialize\",\n    \"params\": {\n        \"protocolVersion\": \"2024-11-05\",\n        \"capabilities\": {},\n        \"clientInfo\": {\n            \"name\": \"postman\",\n            \"version\": \"1.0\"\n        }\n    }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{MCP-URL}}/mcp",
+              "host": [
+                "{{MCP-URL}}"
+              ],
+              "path": [
+                "mcp"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "03 - MCP - Initialize - Connect with Mcp-Session-Id",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Mcp-Session-Id",
+                "value": "{{mcp_session_id}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"jsonrpc\": \"2.0\",\n    \"method\": \"notifications/initialized\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{MCP-URL}}/mcp",
+              "host": [
+                "{{MCP-URL}}"
+              ],
+              "path": [
+                "mcp"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "04 - MCP - Listar Tools",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Mcp-Session-Id",
+                "value": "{{mcp_session_id}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"jsonrpc\": \"2.0\",\n    \"id\": 2,\n    \"method\": \"tools/list\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{MCP-URL}}/mcp",
+              "host": [
+                "{{MCP-URL}}"
+              ],
+              "path": [
+                "mcp"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 - Conexión con Token Atina",
+      "item": [
+        {
+          "name": "01 - Login with User Credentials for BSFN",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  " \r",
+                  "pm.test(\"Save Token\", function () {\r",
+                  "    const responseBody = pm.response.json(); \r",
+                  "    pm.collectionVariables.set(\"access_token_atina\", responseBody.jwtToken);\r",
+                  "    console.log(\"token:\", responseBody.jwtToken);\r",
+                  "    pm.response.to.have.status(200);\r",
+                  "});\r",
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Token",
+                "value": "",
+                "type": "text",
+                "disabled": true
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "TransactionId",
+                "value": "0",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n    \"user\": \"JDE\",\r\n    \"environment\": \"JDV920\",\r\n    \"password\": \"modus2020!\",\r\n    \"wsconnection\": false,\r\n    \"role\": \"*ALL\",\r\n    \"transactionID\": {{randomSixDigits}}\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{ATINA-GATEWAY-URL}}/v1/session/login",
+              "host": [
+                "{{ATINA-GATEWAY-URL}}"
+              ],
+              "path": [
+                "v1",
+                "session",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "02 - MCP - Initialize - Connect with Valid Atina Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  " ",
+                  "pm.test(\"Save Token\", function () {",
+                  "    const sessionId = pm.response.headers.get(\"Mcp-Session-Id\"); ",
+                  "    const responseBody = pm.response.json();",
+                  "    pm.collectionVariables.set(\"mcp_session_id\", sessionId);",
+                  "     console.log(\"Server Info:\", responseBody.result.serverInfo);",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token_atina}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"jsonrpc\": \"2.0\",\n    \"id\": 1,\n    \"method\": \"initialize\",\n    \"params\": {\n        \"protocolVersion\": \"2024-11-05\",\n        \"capabilities\": {},\n        \"clientInfo\": {\n            \"name\": \"postman\",\n            \"version\": \"1.0\"\n        }\n    }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "http://{{MCP-Host}}:{{MCP-Port}}/mcp",
+              "protocol": "http",
+              "host": [
+                "{{MCP-Host}}"
+              ],
+              "port": "{{MCP-Port}}",
+              "path": [
+                "mcp"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 - Emulacion Inspect with JSON-RPC - Test MCP With Postman",
+      "item": [
+        {
+          "name": "01 - KEYCLOAK - Obtención de Token desde Keycloak",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Save Token\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "",
+                  "    const responseBody = pm.response.json();",
+                  "",
+                  "    const accessToken = responseBody.access_token;",
+                  "    const refreshToken = responseBody.refresh_token;",
+                  "",
+                  "    pm.expect(accessToken, \"access_token no está presente\").to.be.a(\"string\");",
+                  "",
+                  "    // Guardar tokens OAuth",
+                  "    pm.collectionVariables.set(\"access_token\", accessToken);",
+                  "",
+                  "    if (refreshToken) {",
+                  "        pm.collectionVariables.set(\"refresh_token\", refreshToken);",
+                  "    }",
+                  "",
+                  "    // Decodificar el payload del JWT",
+                  "    const tokenParts = accessToken.split(\".\");",
+                  "",
+                  "    pm.expect(tokenParts.length, \"El access_token no tiene formato JWT\").to.equal(3);",
+                  "",
+                  "    let payloadBase64 = tokenParts[1]",
+                  "        .replace(/-/g, \"+\")",
+                  "        .replace(/_/g, \"/\");",
+                  "",
+                  "    // Agregar padding Base64 si es necesario",
+                  "    while (payloadBase64.length % 4 !== 0) {",
+                  "        payloadBase64 += \"=\";",
+                  "    }",
+                  "",
+                  "    const payloadJson = decodeURIComponent(",
+                  "        atob(payloadBase64)",
+                  "            .split(\"\")",
+                  "            .map(function (character) {",
+                  "                return \"%\" + (\"00\" + character.charCodeAt(0).toString(16)).slice(-2);",
+                  "            })",
+                  "            .join(\"\")",
+                  "    );",
+                  "",
+                  "    const payload = JSON.parse(payloadJson);",
+                  "    const atinaToken = payload.atina_token;",
+                  "",
+                  "    pm.expect(",
+                  "        atinaToken,",
+                  "        \"El claim atina_token no está presente en el access_token\"",
+                  "    ).to.be.a(\"string\");",
+                  "",
+                  "    // Guardar el token de Atina como variable de colección",
+                  "    pm.collectionVariables.set(\"atina_token\", atinaToken);",
+                  "",
+                  "    console.log(\"Access token:\", accessToken);",
+                  "    console.log(\"Atina token:\", atinaToken);",
+                  "    console.log(\"JWT payload:\", payload);",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "{{Grant-Type}}",
+                  "type": "text",
+                  "uuid": "afc9d830-c11b-43e3-8d68-3390a1641a15"
+                },
+                {
+                  "key": "client_id",
+                  "value": "atina-mcp-server",
+                  "type": "text",
+                  "uuid": "fcf46b72-21e2-487b-b93a-148e4f9caef3"
+                },
+                {
+                  "key": "username",
+                  "value": "jgodino",
+                  "type": "text",
+                  "uuid": "4df9d3a8-362a-4180-83f8-124f570b8c39"
+                },
+                {
+                  "key": "password",
+                  "value": "Jde.Mcp2026",
+                  "type": "text",
+                  "uuid": "8a8ac9d0-dfe2-4e31-9d8c-c53fc62a9bda"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{Keycloak-URL}}/realms/jde-integration/protocol/openid-connect/token",
+              "host": [
+                "{{Keycloak-URL}}"
+              ],
+              "path": [
+                "realms",
+                "jde-integration",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "02 - MCP - Initialize - Connect with Valid Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  " ",
+                  "pm.test(\"Save Token\", function () {",
+                  "    const sessionId = pm.response.headers.get(\"Mcp-Session-Id\"); ",
+                  "    const responseBody = pm.response.json();",
+                  "    pm.collectionVariables.set(\"mcp_session_id\", sessionId);",
+                  "     console.log(\"Server Info:\", responseBody.result.serverInfo);",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"jsonrpc\": \"2.0\",\n    \"id\": 1,\n    \"method\": \"initialize\",\n    \"params\": {\n        \"protocolVersion\": \"2024-11-05\",\n        \"capabilities\": {},\n        \"clientInfo\": {\n            \"name\": \"postman\",\n            \"version\": \"1.0\"\n        }\n    }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{MCP-URL}}/mcp",
+              "host": [
+                "{{MCP-URL}}"
+              ],
+              "path": [
+                "mcp"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "03 - MCP - Initialize - Connect with Mcp-Session-Id",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Mcp-Session-Id",
+                "value": "{{mcp_session_id}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"jsonrpc\": \"2.0\",\n    \"method\": \"notifications/initialized\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{MCP-URL}}/mcp",
+              "host": [
+                "{{MCP-URL}}"
+              ],
+              "path": [
+                "mcp"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "04 - MCP - Listar Tools",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Mcp-Session-Id",
+                "value": "{{mcp_session_id}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"jsonrpc\": \"2.0\",\n    \"id\": 2,\n    \"method\": \"tools/list\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{MCP-URL}}/mcp",
+              "host": [
+                "{{MCP-URL}}"
+              ],
+              "path": [
+                "mcp"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05 - MCP - Invocar un Tool",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Mcp-Session-Id",
+                "value": "{{mcp_session_id}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"jsonrpc\": \"2.0\",\n    \"id\": 3,\n    \"method\": \"tools/call\",\n    \"params\": {\n        \"name\": \"jde_list_pending_purchase_orders\",\n        \"arguments\": {\n            \"limit\": 5\n        }\n    }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{MCP-URL}}/mcp/mcp",
+              "host": [
+                "{{MCP-URL}}"
+              ],
+              "path": [
+                "mcp",
+                "mcp"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06 - MCP - Invocar un Tool",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Mcp-Session-Id",
+                "value": "{{mcp_session_id}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"jde_get_purchase_order_detail\",\n    \"arguments\": {\n      \"documentOrderTypeCode\": \"OP\",\n      \"documentOrderInvoiceNumber\": 5082,\n      \"documentCompanyKeyOrderNo\": \"00001\",\n      \"documentSuffix\": \"000\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{MCP-URL}}/mcp/mcp",
+              "host": [
+                "{{MCP-URL}}"
+              ],
+              "path": [
+                "mcp",
+                "mcp"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 - Validate OATH 2.1 Discovery Phase",
+      "item": [
+        {
+          "name": "01 - MCP - Initialize - Connect without Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  " ",
+                  "pm.test(\"Save Token\", function () {",
+                  "    const sessionId = pm.response.headers.get(\"Mcp-Session-Id\"); ",
+                  "    const responseBody = pm.response.json();",
+                  "    pm.collectionVariables.set(\"mcp_session_id\", sessionId);",
+                  "     console.log(\"Server Info:\", responseBody.result.serverInfo);",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"jsonrpc\": \"2.0\",\n    \"id\": 1,\n    \"method\": \"initialize\",\n    \"params\": {\n        \"protocolVersion\": \"2024-11-05\",\n        \"capabilities\": {},\n        \"clientInfo\": {\n            \"name\": \"postman\",\n            \"version\": \"1.0\"\n        }\n    }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{MCP-URL}}/mcp",
+              "host": [
+                "{{MCP-URL}}"
+              ],
+              "path": [
+                "mcp"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "02 - MCP - Obtención de Metadata Auth",
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          },
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": []
+            },
+            "url": {
+              "raw": "{{MCP-URL}}/.well-known/oauth-protected-resource",
+              "host": [
+                "{{MCP-URL}}"
+              ],
+              "path": [
+                ".well-known",
+                "oauth-protected-resource"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "03 - MCP - Obtención del Detalle de Server",
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          },
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": []
+            },
+            "url": {
+              "raw": "{{Keycloak-URL}}/realms/jde-integration/.well-known/openid-configuration",
+              "host": [
+                "{{Keycloak-URL}}"
+              ],
+              "path": [
+                "realms",
+                "jde-integration",
+                ".well-known",
+                "openid-configuration"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "04 - Obtencion de Keycloak Realm",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{Keycloak-URL}}/realms/jde-integration",
+              "host": [
+                "{{Keycloak-URL}}"
+              ],
+              "path": [
+                "realms",
+                "jde-integration"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "oauth2",
+    "oauth2": [
+      {
+        "key": "refreshTokenUrl",
+        "value": "{{Keycloak-URL}}/realms/jde-integration/protocol/openid-connect/token",
+        "type": "string"
+      },
+      {
+        "key": "accessTokenUrl",
+        "value": "{{Keycloak-URL}}/realms/jde-integration/protocol/openid-connect/token",
+        "type": "string"
+      },
+      {
+        "key": "authUrl",
+        "value": "{{Keycloak-URL}}/realms/jde-integration/protocol/openid-connect/auth",
+        "type": "string"
+      },
+      {
+        "key": "client_authentication",
+        "value": "body",
+        "type": "string"
+      },
+      {
+        "key": "scope",
+        "value": "openid profile email",
+        "type": "string"
+      },
+      {
+        "key": "clientId",
+        "value": "atina-mcp-server",
+        "type": "string"
+      },
+      {
+        "key": "redirect_uri",
+        "value": "http://localhost:8123/callback",
+        "type": "string"
+      },
+      {
+        "key": "grant_type",
+        "value": "authorization_code_with_pkce",
+        "type": "string"
+      },
+      {
+        "key": "addTokenTo",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "Keycloak-URL",
+      "value": ""
+    },
+    {
+      "key": "MCP-URL",
+      "value": ""
+    },
+    {
+      "key": "ATINA-GATEWAY-URL",
+      "value": ""
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "refresh_token",
+      "value": ""
+    },
+    {
+      "key": "mcp_session_id",
+      "value": ""
+    },
+    {
+      "key": "Grant-Type",
+      "value": ""
+    },
+    {
+      "key": "UserName",
+      "value": ""
+    },
+    {
+      "key": "Grant-Type-Oath21",
+      "value": ""
+    },
+    {
+      "key": "access_token_atina",
+      "value": ""
+    },
+    {
+      "key": "atina_token",
+      "value": ""
+    },
+    {
+      "key": "Keycloak-URL-Local",
+      "value": ""
+    },
+    {
+      "key": "MCP-URL-Local",
+      "value": ""
+    },
+    {
+      "key": "ATINA-GATEWAY-URL-Local",
+      "value": ""
+    },
+    {
+      "key": "Keycloak-URL-NGROK",
+      "value": ""
+    },
+    {
+      "key": "ATINA-GATEWAY-URL-NGROK",
+      "value": ""
+    },
+    {
+      "key": "MCP-URL-NGROK",
+      "value": ""
+    }
+  ]
+}

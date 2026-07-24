@@ -352,6 +352,26 @@ docker compose --profile local exec mcp-server curl -s -o /dev/null -w '%{http_c
 Con eso, Postman puede hacer el flujo OAuth2.1 completo contra
 `http://localhost:8180/realms/jde-integration` sin ningún túnel de por medio.
 
+### Validación automática (`validate-local.sh`)
+
+Repite en `curl` los mismos chequeos que se venían haciendo a mano en Postman
+(fase de discovery sin token, protected-resource-metadata, discovery de
+Keycloak, handshake MCP completo con token real, y el bypass de Atina) — todo
+lo que no requiere un browser. El login interactivo real (Authorization Code +
+PKCE) sigue siendo cosa de Postman/Claude Desktop de vez en cuando; este
+script no lo reemplaza, cubre el resto para no tener que clickear cada vez:
+
+```bash
+cd docker
+./scripts/validate-local.sh                                          # sin credenciales: salta los tests con token de Keycloak
+TEST_USERNAME=jgodino TEST_PASSWORD='...' ./scripts/validate-local.sh # corre todo
+```
+
+> ⚠️ Si alguno de estos tests falla apuntando a la URL de ngrok, es señal de
+> que el contenedor se recreó con `docker compose ... up` a mano (sin
+> `--env-file .env.local`) en algún momento — volver a levantar con
+> `up-local.sh` y repetir.
+
 ---
 
 ## Parte 3: Empaquetar y llevar a otra PC
