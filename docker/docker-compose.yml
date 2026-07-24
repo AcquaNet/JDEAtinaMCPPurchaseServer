@@ -22,7 +22,7 @@ services:
     image: postgres:16
     container_name: keycloak-db
     restart: unless-stopped
-    profiles: ["dev", "stage", "prod"]
+    profiles: ["local","dev", "stage", "prod"]
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
@@ -77,7 +77,7 @@ services:
     image: openbao/openbao:2.5.0
     container_name: openbao
     restart: unless-stopped
-    profiles: ["dev", "stage", "prod"]
+    profiles: ["local","dev", "stage", "prod"]
     cap_add:
       - IPC_LOCK
     ports:
@@ -116,7 +116,7 @@ services:
     image: ${MCP_IMAGE:-jde-mcp-server:latest}
     container_name: jde-mcp-server
     restart: unless-stopped
-    profiles: ["dev", "stage", "prod"]
+    profiles: ["local","dev", "stage", "prod"]
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
       # dev/stage: sin fallback util adentro del contenedor -- "localhost" ahi es el
