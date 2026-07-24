@@ -15,6 +15,7 @@ Para referencia rápida de qué archivo hace qué dentro de `docker/`, ver
 - [Arquitectura](#arquitectura)
 - [Parte 1: Preparar tu máquina](#parte-1-preparar-tu-máquina)
 - [Parte 2: Demo con ngrok (login OAuth real)](#parte-2-demo-con-ngrok-login-oauth-real)
+- [Parte 2b: Probar el contenedor sin ngrok (profile `local`)](#parte-2b-probar-el-contenedor-sin-ngrok-profile-local)
 - [Parte 3: Empaquetar y llevar a otra PC](#parte-3-empaquetar-y-llevar-a-otra-pc)
 - [Parte 4: Digital Ocean (prod)](#parte-4-digital-ocean-prod)
 - [Keycloak: exportar/importar el realm](#keycloak-exportarimportar-el-realm)
@@ -290,6 +291,69 @@ Solo esto — todo lo del setup inicial queda guardado:
 
 ---
 
+## Parte 2b: Probar el contenedor sin ngrok (profile `local`)
+
+Para aislar si un error es causado por ngrok (latencia, buffering del túnel,
+etc.), hay un profile `local`: mismo stack que `dev`, pero con el MCP Server
+**containerizado** (no vía IDE) y sin ningún túnel — Keycloak, OpenBao y el
+MCP Server se acceden todos por `localhost` desde el host (Postman, browser).
+
+> Requiere el MCP Server con el desacople `issuer-uri`/`jwks-uri` en
+> `SecurityConfig.keycloakDecoder` (property `jde.mcp.security.keycloak-jwks-uri`)
+> — si tu checkout es viejo y no lo tiene, `git pull`.
+
+**Por qué hace falta esto y no alcanza con `KC_HOSTNAME=http://localhost:8180`
+a secas**: el navegador/Postman corren en el host y necesitan `localhost:8180`
+para llegar a Keycloak, pero el contenedor de `mcp-server` no puede resolver
+`localhost` como si fuera el host (ahí "localhost" es el propio contenedor) ni
+tampoco `host.docker.internal` desde el lado del host (solo resuelve *dentro*
+de contenedores). Sin ngrok no hay un único hostname que sirva para los dos
+lados. La solución: el `issuer-uri` (lo que Keycloak firma en `iss`, y lo que
+se valida contra el token) queda en `http://localhost:8180/...` — alcanzable
+desde el host —, pero el `jwks-uri` (de dónde el contenedor trae la clave
+pública para validar la firma) se fija aparte a la ruta interna de Docker
+Compose (`http://keycloak:8080/...`) vía `KEYCLOAK_JWKS_URI`.
+
+**Setup** (`docker/.env.local` ya viene con esto):
+
+```bash
+# docker/.env.local
+KC_HOSTNAME=http://localhost:8180
+MCP_KEYCLOAK_ISSUER_URI=http://localhost:8180/realms/jde-integration
+KEYCLOAK_JWKS_URI=http://keycloak:8080/realms/jde-integration/protocol/openid-connect/certs
+```
+
+**Levantar**: usar siempre `docker/scripts/up-local.sh`, no `docker compose
+--profile local up` a mano. El flag `--env-file .env.local` es obligatorio
+(sin él, Compose cae en silencio a `docker/.env`, con la URL de ngrok, y no
+avisa del error) — ya pasó dos veces en este proyecto, incluso sabiéndolo. El
+script fuerza el `--env-file` y el `--build` (para tomar siempre el código
+actual, no una imagen de registry vieja — otro error ya cometido: `.env.local`
+llegó a tener `MCP_IMAGE=92455890/jde-mcp-server:1.0.0` apuntando a un tag
+pusheado antes de un fix), y verifica solo que el resultado no sea ngrok:
+
+```bash
+cd docker
+./scripts/up-local.sh              # todos los servicios del profile
+./scripts/up-local.sh mcp-server   # o solo un servicio
+```
+
+Si por lo que sea corrés el `docker compose` a mano, verificar con:
+
+```bash
+# Debe anunciar localhost:8180, no la URL de ngrok
+curl -s http://localhost:8080/.well-known/oauth-protected-resource
+
+# Debe dar 200 -- confirma que el contenedor llega al jwks-uri interno
+docker compose --profile local exec mcp-server curl -s -o /dev/null -w '%{http_code}\n' \
+  http://keycloak:8080/realms/jde-integration/protocol/openid-connect/certs
+```
+
+Con eso, Postman puede hacer el flujo OAuth2.1 completo contra
+`http://localhost:8180/realms/jde-integration` sin ningún túnel de por medio.
+
+---
+
 ## Parte 3: Empaquetar y llevar a otra PC
 
 La otra PC **no necesita** Java, Maven, ni el código fuente — solo Docker y la
@@ -559,6 +623,7 @@ Para no reconfigurar Keycloak a mano cada vez que se levanta un ambiente nuevo:
 | `mcp-remote`: `InsufficientScopeError: Policy 'Allowed Client Scopes' rejected request to client-registration service` | `mcp-remote` no tiene un client_id fijo configurado y por default intenta Dynamic Client Registration contra Keycloak, que el realm rechaza | Agregar `--static-oauth-client-info '{ "client_id": "atina-mcp-server" }'` al `args` del config de Claude Desktop (ver Parte 2, Paso 5) — usa el client que ya existe en vez de registrar uno nuevo |
 | Token de Atina real da `401` en Docker/ngrok pero `200` en una instancia local | `ATINA_JWT_SECRET` distinto entre `docker/.env` y el entorno donde corre la instancia local (firma HS256 no matchea) | Poner el mismo `ATINA_JWT_SECRET` real (el del microservicio de Atina) en `docker/.env` y recrear `mcp-server` |
 | `docker pull`/`docker compose pull` en otra PC: `manifest unknown` o `no matching manifest for linux/amd64 in the manifest list entries` | La imagen se pusheó single-arch (solo la arquitectura de la máquina que la buildeó, ej. `arm64` en Mac Apple Silicon) en vez de multi-arquitectura | Rebuildear y pushear con Parte 3, Paso 1 (`docker compose build --builder multiarch-builder --push`); confirmar con `docker buildx imagetools inspect <imagen>:<tag>` que lista `amd64` **y** `arm64` antes de reintentar el pull. Ojo: correr después `docker compose up -d --build` con el mismo tag y volver a pushearlo manualmente pisa el manifest bueno con uno single-arch de nuevo |
+| `docker compose --profile local up` usa la URL de ngrok en vez de `localhost` (sin avisar) | Falta el flag `--env-file .env.local` — Compose cae en silencio a `docker/.env` (el de `dev`, con ngrok) | Usar `docker/scripts/up-local.sh` (ver Parte 2b), que fuerza el `--env-file` correcto y verifica solo que no haya quedado apuntando a ngrok |
 | Caddy no obtiene certificado (prod) | DNS no resuelve al droplet, o puertos 80/443 no accesibles desde internet | `dig +short jdemcp-atina-connection.com`, `curl http://jdemcp-atina-connection.com` desde otra máquina, `docker compose ... logs caddy` |
 | Todos los tokens de Keycloak son rechazados (401) | `MCP_KEYCLOAK_ISSUER_URI` no coincide con `KC_HOSTNAME` | Revisar que ambos sean la misma URL pública (ngrok o dominio real) |
 | `jde.vault.addr`/`jde.vault.token` fallan | `BAO_TOKEN` no seteado, o token de OpenBao expirado/inválido | `docker compose ... logs openbao`; `curl http://127.0.0.1:8200/v1/sys/health` (o por SSH tunnel en prod) |

@@ -36,7 +36,7 @@ services:
     image: quay.io/keycloak/keycloak:26.0
     container_name: keycloak
     restart: unless-stopped
-    profiles: ["dev", "stage", "prod"]
+    profiles: ["local", "dev", "stage", "prod"]
     # --import-realm: si el realm "jde-integration" no existe todavia en la data
     # persistida (volumen keycloak_data), lo crea a partir del JSON montado abajo.
     # Ver docker/keycloak/export-realm.sh para regenerar ese JSON con cambios hechos
@@ -126,6 +126,13 @@ services:
       # siendo correr el jar desde el IDE (ahi "localhost" es correcto) -- este servicio
       # es para probar la imagen Docker en si.
       SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: ${MCP_KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/jde-integration}
+      # Vacio en dev/stage/prod (issuer-uri de arriba ya es alcanzable desde el
+      # contenedor -- discovery normal). Setear SOLO en el profile "local" (sin
+      # ngrok): ahi issuer-uri queda en http://localhost:8180 (lo que Keycloak
+      # realmente firma, alcanzable desde el host/Postman) pero el contenedor no
+      # puede resolver "localhost" como el host -- esto le da una ruta interna
+      # (http://keycloak:8080/...) para el JWKS sin depender de ese discovery.
+      KEYCLOAK_JWKS_URI: ${KEYCLOAK_JWKS_URI:-}
       BAO_ADDR: ${BAO_ADDR:-http://openbao:8200}
       BAO_TOKEN: ${BAO_TOKEN:-dev-only-root-token}
       ATINA_JWT_SECRET: ${ATINA_JWT_SECRET:-}

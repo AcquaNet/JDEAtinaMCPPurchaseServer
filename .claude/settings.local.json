@@ -114,7 +114,18 @@
       "Bash(ps -o pid,etime,command -p 21896,21893)",
       "Bash(MCP_IMAGE=92455890/jde-mcp-server:compose-test docker compose --profile dev build --builder multiarch-builder --push mcp-server)",
       "Bash(docker image *)",
-      "Bash(MCP_IMAGE=92455890/jde-mcp-server:1.0.0 docker compose --profile dev build --builder multiarch-builder --push mcp-server)"
+      "Bash(MCP_IMAGE=92455890/jde-mcp-server:1.0.0 docker compose --profile dev build --builder multiarch-builder --push mcp-server)",
+      "Bash(getent hosts *)",
+      "Bash(dscacheutil -q host -a name keycloak)",
+      "Bash(dscacheutil -q host -a name host.docker.internal)",
+      "Bash(curl -s -o /dev/null -w \"http://localhost:8180 -> %{http_code}\\\\n\" http://localhost:8180/realms/jde-integration)",
+      "Bash(curl -s -o /dev/null -w \"http://host.docker.internal:8180 -> %{http_code}\\\\n\" http://host.docker.internal:8180/realms/jde-integration)",
+      "Bash(MCP_IMAGE=jde-mcp-server:local-test docker compose --profile local up -d --build)",
+      "Bash(curl -s http://localhost:8180/realms/jde-integration/.well-known/openid-configuration)",
+      "Bash(curl -s -i http://localhost:8080/mcp -X POST -H \"Content-Type: application/json\" -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}')",
+      "Bash(curl -s -X POST http://localhost:8180/realms/jde-integration/protocol/openid-connect/token -d client_id=atina-mcp-server -d grant_type=password -d username=jgodino -d password=jgodino)",
+      "Bash(curl *)",
+      "Bash(./scripts/up-local.sh mcp-server *)"
     ]
   }
 }

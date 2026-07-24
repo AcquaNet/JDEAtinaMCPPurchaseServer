@@ -17,7 +17,6 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtDecoders;
 import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
 import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
-import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.SupplierJwtDecoder;
 import org.springframework.security.web.SecurityFilterChain;
@@ -35,6 +34,23 @@ public class SecurityConfig {
 
     @Value("${jde.mcp.security.expected-audience}")
     private String expectedAudience;
+
+    // Vacío por defecto = comportamiento de siempre: discovery completo contra
+    // issuerUri (JwtDecoders.fromIssuerLocation), que exige que este proceso pueda
+    // alcanzar issuerUri directamente y que el "issuer" del .well-known devuelto
+    // coincida exactamente con issuerUri. Funciona cuando issuerUri es alcanzable
+    // desde donde corre el MCP Server (IDE local, o detrás de ngrok/Caddy donde el
+    // mismo dominio público también resuelve puertas adentro).
+    // Setear SOLO cuando el MCP Server corre containerizado y el issuer público (lo
+    // que Keycloak realmente firma en "iss", ej. http://localhost:8180 para el
+    // profile "local" sin ngrok) NO es alcanzable desde el contenedor -- ahí apuntar
+    // esto a la URL interna real del JWKS (ej. Docker Compose:
+    // http://keycloak:8080/realms/jde-integration/protocol/openid-connect/certs).
+    // issuerUri se sigue usando para validar el claim "iss" del token (debe coincidir
+    // con lo que Keycloak realmente firma) y para /.well-known/oauth-protected-resource
+    // (los clientes necesitan esa URL pública para el login, no la interna).
+    @Value("${jde.mcp.security.keycloak-jwks-uri:}")
+    private String keycloakJwksUri;
 
     private final McpResourceMetadataEntryPoint resourceMetadataEntryPoint;
 
@@ -103,18 +119,28 @@ public class SecurityConfig {
     }
 
     private JwtDecoder keycloakDecoder() {
-        // SupplierJwtDecoder difiere el OIDC discovery contra Keycloak hasta el
-        // primer token a validar: el server (y los tests de contexto) arrancan
+        // SupplierJwtDecoder difiere el OIDC discovery/jwks-uri contra Keycloak hasta
+        // el primer token a validar: el server (y los tests de contexto) arrancan
         // aunque Keycloak no este disponible en ese momento.
         return new SupplierJwtDecoder(() -> {
-            NimbusJwtDecoder decoder = (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(issuerUri);
+            NimbusJwtDecoder decoder;
+            if (keycloakJwksUri != null && !keycloakJwksUri.isBlank()) {
+                // jwks-uri fijo (alcanzable desde este proceso), sin discovery contra
+                // issuerUri -- ver comentario del campo keycloakJwksUri.
+                decoder = NimbusJwtDecoder.withJwkSetUri(keycloakJwksUri).build();
+            } else {
+                decoder = (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(issuerUri);
+            }
 
-            OAuth2TokenValidator<Jwt> withIssuer = JwtValidators.createDefaultWithIssuer(issuerUri);
-
+            // Validado siempre contra issuerUri (el valor publico que Keycloak firma en
+            // "iss"), tanto si el jwks vino por discovery como si vino de keycloakJwksUri.
             // Validador de audiencia: sin esto, CUALQUIER token valido de Keycloak
             // (de otro client, de otra realm-app) seria aceptado por este resource server.
-            decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
-                    List.of(withIssuer, audienceValidator(expectedAudience))));
+            List<OAuth2TokenValidator<Jwt>> validators = List.of(
+                    new JwtTimestampValidator(),
+                    new JwtIssuerValidator(issuerUri),
+                    audienceValidator(expectedAudience));
+            decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(validators));
             return decoder;
         });
     }
