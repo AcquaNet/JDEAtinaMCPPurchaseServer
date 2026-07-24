@@ -329,6 +329,19 @@ bueno (debe listar `amd64` y `arm64`, no solo uno):
 docker buildx imagetools inspect 92455890/jde-mcp-server:TAG
 ```
 
+> ⚠️ **No correr después `docker compose --profile dev up -d --build
+> mcp-server` (ni `docker build`/`docker push` sueltos) con ese mismo
+> `MCP_IMAGE`.** `up --build` arma la imagen SOLO para la arquitectura de
+> esta Mac (para poder correrla local, no puede "levantar" un manifest
+> multi-plataforma) y la deja local con ese mismo nombre — un `docker push`
+> posterior de esa imagen (a mano, o por costumbre) pisa el manifest
+> multi-arquitectura bueno con uno single-arch, y el pull vuelve a fallar en
+> Windows/Linux. Esto ya pasó. Para correr/probar la imagen local, usar un
+> `MCP_IMAGE` que **no** sea el que ya pusheaste (por ejemplo, sin setear la
+> variable, que cae al default `jde-mcp-server:latest` sin el namespace de
+> Docker Hub) — el único comando que debe tocar el tag real (`92455890/...`)
+> es el `docker compose build --push` de arriba.
+
 **2. Armar el ZIP con solo lo necesario** (ya hay un script para esto):
 
 ```bash
@@ -545,6 +558,7 @@ Para no reconfigurar Keycloak a mano cada vez que se levanta un ambiente nuevo:
 | `mcp-remote`: `Discovered authorization server: http://keycloak:8080/...` | El MCP Server todavía apunta al issuer interno de Docker, no al túnel ngrok de Keycloak | Completar Parte 2, Paso 3 (`KC_HOSTNAME`/`MCP_KEYCLOAK_ISSUER_URI` = URL fija de ngrok) y recrear `keycloak` |
 | `mcp-remote`: `InsufficientScopeError: Policy 'Allowed Client Scopes' rejected request to client-registration service` | `mcp-remote` no tiene un client_id fijo configurado y por default intenta Dynamic Client Registration contra Keycloak, que el realm rechaza | Agregar `--static-oauth-client-info '{ "client_id": "atina-mcp-server" }'` al `args` del config de Claude Desktop (ver Parte 2, Paso 5) — usa el client que ya existe en vez de registrar uno nuevo |
 | Token de Atina real da `401` en Docker/ngrok pero `200` en una instancia local | `ATINA_JWT_SECRET` distinto entre `docker/.env` y el entorno donde corre la instancia local (firma HS256 no matchea) | Poner el mismo `ATINA_JWT_SECRET` real (el del microservicio de Atina) en `docker/.env` y recrear `mcp-server` |
+| `docker pull`/`docker compose pull` en otra PC: `manifest unknown` o `no matching manifest for linux/amd64 in the manifest list entries` | La imagen se pusheó single-arch (solo la arquitectura de la máquina que la buildeó, ej. `arm64` en Mac Apple Silicon) en vez de multi-arquitectura | Rebuildear y pushear con Parte 3, Paso 1 (`docker compose build --builder multiarch-builder --push`); confirmar con `docker buildx imagetools inspect <imagen>:<tag>` que lista `amd64` **y** `arm64` antes de reintentar el pull. Ojo: correr después `docker compose up -d --build` con el mismo tag y volver a pushearlo manualmente pisa el manifest bueno con uno single-arch de nuevo |
 | Caddy no obtiene certificado (prod) | DNS no resuelve al droplet, o puertos 80/443 no accesibles desde internet | `dig +short jdemcp-atina-connection.com`, `curl http://jdemcp-atina-connection.com` desde otra máquina, `docker compose ... logs caddy` |
 | Todos los tokens de Keycloak son rechazados (401) | `MCP_KEYCLOAK_ISSUER_URI` no coincide con `KC_HOSTNAME` | Revisar que ambos sean la misma URL pública (ngrok o dominio real) |
 | `jde.vault.addr`/`jde.vault.token` fallan | `BAO_TOKEN` no seteado, o token de OpenBao expirado/inválido | `docker compose ... logs openbao`; `curl http://127.0.0.1:8200/v1/sys/health` (o por SSH tunnel en prod) |
