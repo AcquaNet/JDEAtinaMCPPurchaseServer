@@ -96,15 +96,70 @@ public class JdePurchaseOrderClient {
     // =========================================================================
     public String getPendingPurchaseOrders(Integer limit, String orderTypeCode,
                                             String businessUnitCode, String statusCodeNext) {
-
         long approverAddressNumber = authService.getApproverAddressBookNumber();
+        ArrayNode all = fetchAllPendingOrders(orderTypeCode, businessUnitCode, statusCodeNext,
+                approverAddressNumber, this::executeGatewayOperation);
+        return limitAndFormatPendingOrders(all, limit);
+    }
 
+    /**
+     * Resuelve de una sola vez el token de sesión JDE y el address book number
+     * del aprobador logueado -- pensado para ejecuciones que necesitan pasar
+     * ese contexto como dato plano fuera del ciclo de vida del
+     * HttpServletRequest original (ver {@link #executeGatewayOperationWithToken}).
+     */
+    public record ApproverContext(String token, long approverAddressNumber) {
+    }
+
+    public ApproverContext resolveApproverContext() {
+        String token = authService.getOrCreateToken();
+        return new ApproverContext(token, authService.extractApproverAddressBookNumber(token));
+    }
+
+    /**
+     * Igual que {@link #getPendingPurchaseOrders} pero con un {@link ApproverContext}
+     * ya resuelto, y sin aplicar el recorte por `limit` (devuelve todos los
+     * resultados shapeados) -- pensado para consumidores que separan "traer los
+     * datos" de "aplicar el límite de presentación" (ej. un futuro mecanismo
+     * asíncrono). No la llama nadie todavía.
+     */
+    public ArrayNode fetchAllPendingOrdersWithToken(String orderTypeCode, String businessUnitCode,
+                                                     String statusCodeNext, ApproverContext ctx) {
+        return fetchAllPendingOrders(orderTypeCode, businessUnitCode, statusCodeNext,
+                ctx.approverAddressNumber(),
+                (op, val) -> executeGatewayOperationWithToken(op, val, ctx.token()));
+    }
+
+    /** Valores de filtro ya defaulteados (ver {@link #resolveEffectiveFilters}). */
+    public record EffectiveFilters(String orderType, String businessUnit, String statusCodeNext) {
+    }
+
+    /**
+     * Aplica los defaults configurados (jde.purchase.default-*) a los filtros
+     * opcionales del tool -- expuesto como método público para que un caller
+     * externo (ej. la key de deduplicación de un mecanismo asíncrono) calcule
+     * los MISMOS valores "efectivos" que usa la llamada real al Gateway, sin
+     * duplicar esta lógica en dos lugares.
+     */
+    public EffectiveFilters resolveEffectiveFilters(String orderTypeCode, String businessUnitCode,
+                                                     String statusCodeNext) {
         String effectiveOrderType = (orderTypeCode != null && !orderTypeCode.isBlank())
                 ? orderTypeCode : defaultOrderTypeCode;
         String effectiveBusinessUnit = (businessUnitCode != null && !businessUnitCode.isBlank())
                 ? businessUnitCode : defaultBusinessUnitCode;
         String effectiveStatusCodeNext = (statusCodeNext != null && !statusCodeNext.isBlank())
                 ? statusCodeNext : defaultStatusCodeNext;
+        return new EffectiveFilters(effectiveOrderType, effectiveBusinessUnit, effectiveStatusCodeNext);
+    }
+
+    private ArrayNode fetchAllPendingOrders(String orderTypeCode, String businessUnitCode, String statusCodeNext,
+                                             long approverAddressNumber,
+                                             java.util.function.BiFunction<String, Map<String, Object>, JsonNode> operationExecutor) {
+
+        EffectiveFilters filters = resolveEffectiveFilters(orderTypeCode, businessUnitCode, statusCodeNext);
+        String effectiveOrderType = filters.orderType();
+        String effectiveBusinessUnit = filters.businessUnit();
+        String effectiveStatusCodeNext = filters.statusCodeNext();
 
         log.info("Requesting pending purchase orders for approver {} (orderType={}, businessUnit={}, statusCodeNext={})",
                 approverAddressNumber, effectiveOrderType, effectiveBusinessUnit, effectiveStatusCodeNext);
@@ -119,7 +174,7 @@ public class JdePurchaseOrderClient {
         value.put("statusCodeNext", effectiveStatusCodeNext);
         value.put("statusApproval", defaultStatusApproval);
 
-        JsonNode listaDeValores = executeGatewayOperation(OP_GET_PENDING_PURCHASE_ORDERS, value);
+        JsonNode listaDeValores = operationExecutor.apply(OP_GET_PENDING_PURCHASE_ORDERS, value);
         JsonNode results = listaDeValores.path("purchaseOrdersForApproverResults");
 
         ArrayNode legacyShaped = objectMapper.createArrayNode();
@@ -129,13 +184,16 @@ public class JdePurchaseOrderClient {
                 legacyShaped.add(toLegacyShape(item));
             }
         }
+        return legacyShaped;
+    }
 
+    /** Aplica el recorte por `limit` (default 10) y serializa -- mismo criterio que usaba getPendingPurchaseOrders. */
+    public String limitAndFormatPendingOrders(ArrayNode all, Integer limit) {
         int effectiveLimit = (limit != null && limit > 0) ? limit : 10;
         ArrayNode limited = objectMapper.createArrayNode();
-        for (int i = 0; i < legacyShaped.size() && i < effectiveLimit; i++) {
-            limited.add(legacyShaped.get(i));
+        for (int i = 0; i < all.size() && i < effectiveLimit; i++) {
+            limited.add(all.get(i));
         }
-
         return writeValueAsString(limited, "la lista de ordenes pendientes");
     }
 
@@ -289,15 +347,45 @@ public class JdePurchaseOrderClient {
     }
 
     private JsonNode doExecuteGatewayOperation(String operacionKey, Map<String, Object> value) {
-
         String token = authService.getOrCreateToken();
+        ResponseEntity<String> response = postToGateway(operacionKey, value, token);
+        authService.updateTokenFromResponse(response.getHeaders());
+        return parseListaDeValores(response, operacionKey);
+    }
 
+    /**
+     * Variante de {@link #executeGatewayOperation(String, Map)} con un token ya
+     * resuelto (en vez de resolverlo internamente vía authService). Pensada para
+     * ejecuciones que corren fuera del ciclo de vida del HttpServletRequest
+     * original (ver {@link #resolveApproverContext()}), donde authService no
+     * tiene RequestContextHolder disponible.
+     *
+     * NO llama authService.updateTokenFromResponse(...) -- ese refresh de cache
+     * necesita metadata del request original que acá no está disponible. Hoy es
+     * un no-op de todas formas bajo jde.atina.session-source=claim (el default
+     * activo en los tres perfiles); solo importaría si algún ambiente cambiara a
+     * Identity Bridge o login manual, en cuyo caso el peor caso es una sesión
+     * que se refresca un poco más tarde de lo ideal (fuerza un re-login
+     * eventual), no un problema de seguridad.
+     */
+    private JsonNode executeGatewayOperationWithToken(String operacionKey, Map<String, Object> value, String token) {
+        return requestCoalescer.execute(
+                coalesceKey(operacionKey, value),
+                () -> doExecuteGatewayOperationWithToken(operacionKey, value, token));
+    }
+
+    private JsonNode doExecuteGatewayOperationWithToken(String operacionKey, Map<String, Object> value, String token) {
+        ResponseEntity<String> response = postToGateway(operacionKey, value, token);
+        return parseListaDeValores(response, operacionKey);
+    }
+
+    private ResponseEntity<String> postToGateway(String operacionKey, Map<String, Object> value, String token) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("operacionKey", operacionKey);
         body.put("listaDeValores", List.of(value));
         body.put("connectorName", "WS");
 
-        ResponseEntity<String> response = gatewayWebClient.post()
+        return gatewayWebClient.post()
                 .uri(gatewayBaseUrl + "/v1/operations/execute")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .header("Token", "null")
@@ -308,9 +396,9 @@ public class JdePurchaseOrderClient {
                 .retrieve()
                 .toEntity(String.class)
                 .block();
+    }
 
-        authService.updateTokenFromResponse(response.getHeaders());
-
+    private JsonNode parseListaDeValores(ResponseEntity<String> response, String operacionKey) {
         try {
             return objectMapper.readTree(response.getBody()).path("listaDeValores");
         } catch (JsonProcessingException e) {

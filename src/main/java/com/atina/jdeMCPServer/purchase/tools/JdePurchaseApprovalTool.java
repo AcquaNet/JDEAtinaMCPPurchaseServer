@@ -1,8 +1,11 @@
 package com.atina.jdeMCPServer.purchase.tools;
 
 import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
+import com.atina.jdeMCPServer.mcp.tasks.LongRunningTask;
+import com.atina.jdeMCPServer.mcp.tasks.LongRunningTaskRegistry;
 import com.atina.jdeMCPServer.purchase.services.JdePurchaseOrderClient;
 import com.atina.jdeMCPServer.security.RealmRoleGuard;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,6 +14,8 @@ import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
+import java.time.Duration;
 
 @Component
 public class JdePurchaseApprovalTool {
@@ -21,15 +26,30 @@ public class JdePurchaseApprovalTool {
     private final RealmRoleGuard roleGuard;
     private final String approverRole;
     private final McpProgressNotifications progressNotifications;
+    private final LongRunningTaskRegistry taskRegistry;
+    private final boolean asyncPendingOrdersEnabled;
+    private final long initialWaitSeconds;
+    private final long gatewayTimeoutMinutes;
+    private final long defaultPollIntervalMs;
 
     public JdePurchaseApprovalTool(JdePurchaseOrderClient jdeClient,
                                    RealmRoleGuard roleGuard,
                                    @Value("${jde.mcp.security.approver-role}") String approverRole,
-                                   McpProgressNotifications progressNotifications) {
+                                   McpProgressNotifications progressNotifications,
+                                   LongRunningTaskRegistry taskRegistry,
+                                   @Value("${jde.purchase.pending-orders.async.enabled:true}") boolean asyncPendingOrdersEnabled,
+                                   @Value("${jde.purchase.pending-orders.async.initial-wait-seconds:8}") long initialWaitSeconds,
+                                   @Value("${jde.atina.gateway.timeout-minutes:10}") long gatewayTimeoutMinutes,
+                                   @Value("${jde.mcp.tasks.default-poll-interval-ms:5000}") long defaultPollIntervalMs) {
         this.jdeClient = jdeClient;
         this.roleGuard = roleGuard;
         this.approverRole = approverRole;
         this.progressNotifications = progressNotifications;
+        this.taskRegistry = taskRegistry;
+        this.asyncPendingOrdersEnabled = asyncPendingOrdersEnabled;
+        this.initialWaitSeconds = initialWaitSeconds;
+        this.gatewayTimeoutMinutes = gatewayTimeoutMinutes;
+        this.defaultPollIntervalMs = defaultPollIntervalMs;
     }
 
     // =========================
@@ -48,6 +68,10 @@ public class JdePurchaseApprovalTool {
         IMPORTANT FOR THE ASSISTANT:
         - Always call this tool BEFORE asking the user to approve or reject a specific purchase order.
         - Do NOT invent or assume purchase order numbers or details. Use exactly the values returned by this tool.
+        - This query can take several minutes against a busy JDE environment. If the response says the query is
+          still in progress, this is NOT an error -- simply call jde_list_pending_purchase_orders again with the
+          exact same parameters after a short pause (the suggested wait is included in the response) until you
+          get the actual list. Never report "still in progress" to the user as a failure.
         - Present the list of purchase orders in a **Markdown table**, one row per purchase order.
         - Use columns (only if available):
          • PO ID → documentOrderTypeCode + "-" + documentOrderInvoiceNumber
@@ -96,15 +120,42 @@ public class JdePurchaseApprovalTool {
             McpSyncServerExchange exchange
     ) {
 
-        progressNotifications.send(exchange, meta, 0, null,
-                "Consultando órdenes pendientes en JDE, puede tardar unos segundos...");
+        if (!asyncPendingOrdersEnabled) {
+            progressNotifications.send(exchange, meta, 0, null,
+                    "Consultando órdenes pendientes en JDE, puede tardar unos segundos...");
+            var orders = jdeClient.getPendingPurchaseOrders(limit, orderTypeCode, businessUnitCode, statusCodeNext);
+            return """
+                   Pending purchase orders (showing up to %d):
+                   %s
+                   """.formatted(limit != null && limit > 0 ? limit : 10, orders);
+        }
 
-        var orders = jdeClient.getPendingPurchaseOrders(limit, orderTypeCode, businessUnitCode, statusCodeNext);
+        var ctx = jdeClient.resolveApproverContext();
+        var filters = jdeClient.resolveEffectiveFilters(orderTypeCode, businessUnitCode, statusCodeNext);
+        String key = "pending-orders|" + ctx.approverAddressNumber()
+                + "|" + filters.orderType() + "|" + filters.businessUnit() + "|" + filters.statusCodeNext();
 
-        return """
-               Pending purchase orders (showing up to %d):
-               %s
-               """.formatted(limit != null && limit > 0 ? limit : 10, orders);
+        LongRunningTask task = taskRegistry.getOrStart(
+                key,
+                Duration.ofMinutes(gatewayTimeoutMinutes + 1),
+                defaultPollIntervalMs,
+                Duration.ofSeconds(initialWaitSeconds),
+                () -> jdeClient.fetchAllPendingOrdersWithToken(orderTypeCode, businessUnitCode, statusCodeNext, ctx));
+
+        return switch (task.status()) {
+            case WORKING, INPUT_REQUIRED -> """
+                    La consulta de órdenes pendientes en JDE está en curso (puede tardar varios minutos). \
+                    Volvé a llamar a jde_list_pending_purchase_orders con los mismos parámetros en unos %d \
+                    segundos para ver el resultado -- esto no es un error.\
+                    """.formatted((task.pollIntervalMs() != null ? task.pollIntervalMs() : defaultPollIntervalMs) / 1000);
+            case COMPLETED -> """
+                    Pending purchase orders (showing up to %d):
+                    %s
+                    """.formatted(limit != null && limit > 0 ? limit : 10,
+                    jdeClient.limitAndFormatPendingOrders((ArrayNode) task.result(), limit));
+            case FAILED -> "Ocurrió un error consultando las órdenes pendientes en JDE: " + task.error();
+            case CANCELLED -> "La consulta fue cancelada. Volvé a llamar a jde_list_pending_purchase_orders para reintentar.";
+        };
     }
 
     // =========================

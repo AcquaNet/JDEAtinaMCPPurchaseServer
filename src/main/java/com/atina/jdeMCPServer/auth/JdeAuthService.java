@@ -141,8 +141,15 @@ public class JdeAuthService {
      * del JWT sin verificar firma, igual que hace JdeTokenStore con "exp".
      */
     public long getApproverAddressBookNumber() {
-        String token = getOrCreateToken();
+        return extractApproverAddressBookNumber(getOrCreateToken());
+    }
 
+    /**
+     * Igual que {@link #getApproverAddressBookNumber()} pero a partir de un token
+     * ya resuelto -- evita resolver el token dos veces cuando el caller ya lo
+     * tiene (ej. para pasarlo como dato plano fuera del contexto del request).
+     */
+    public long extractApproverAddressBookNumber(String token) {
         JsonNode claims;
         try {
             String[] parts = token.split("\\.");
