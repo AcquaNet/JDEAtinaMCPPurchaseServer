@@ -72,6 +72,43 @@ exposición (cómo se expone al protocolo), no rediseñar el motor.
   `jde.mcp.tasks.completed-grace-period-seconds`,
   `jde.mcp.tasks.cleanup-interval-minutes`.
 
+## Capacidad: cuántas tareas corren en paralelo
+
+El límite real es **`jde.mcp.tasks.executor-pool-size` (default 2)** —
+cuántas tareas pueden estar *ejecutando* (corriendo su `Supplier`, es decir,
+la llamada bloqueante real al Gateway) al mismo tiempo. Es un pool fijo, **un
+solo bean compartido por todos los tools que usan el motor** (hoy
+`jde_list_pending_purchase_orders` + `jde_search_items` juntos, no 2 cada
+uno) — no hay un pool separado por tool.
+
+Qué pasa al superar ese número: no falla ni se rechaza nada. La tarea
+extra se encola (la cola interna del `ExecutorService` es ilimitada) y espera
+a que se libere un thread. El caller la ve como "todavía en curso" un poco
+más de tiempo, nunca como un error. Tampoco hay límite en la cantidad de
+tareas *distintas* que el registry puede tener trackeadas a la vez (eso es
+solo memoria, cada `Entry` es liviana) — el límite es únicamente sobre
+cuántas corren *simultáneamente*.
+
+Otras capas que existen pero no son el cuello de botella hoy:
+- Tomcat: sin `server.tomcat.threads.max` configurado explícitamente →
+  default de Spring Boot, 200 threads para requests HTTP entrantes (limita
+  cuántas llamadas MCP puede *recibir* el server en general, muy por encima
+  de 2).
+- Los `WebClient` hacia el Gateway (`JdePurchaseOrderClient`,
+  `JdeSalesOrderClient`) usan el connection pool default de Reactor Netty,
+  sin `ConnectionProvider` propio configurado — tampoco es el límite
+  práctico.
+
+**Pendiente de revisar** (el comentario de `LongRunningTaskRegistry` ya lo
+anticipaba: "el pool está dimensionado para un solo consumidor... revisar el
+tamaño si se conecta un segundo tool lento"): con `jde_search_items` ya
+conectado, el pool de 2 threads es compartido entre dos tools. Si en algún
+momento corren simultáneamente 2 consultas lentas de purchase orders, una
+búsqueda de items nueva quedaría encolada detrás de ambas aunque sea una
+operación más liviana. Si se conecta un tercer tool con este patrón, vale la
+pena subir `jde.mcp.tasks.executor-pool-size` (ej. a 4) en vez de dejarlo en 2
+por default.
+
 ## ⚠️ La regla de oro (por qué esto no es un simple `CompletableFuture.supplyAsync`)
 
 `JdeAuthService.getOrCreateToken()` usa `RequestContextHolder`/`RequestAttributes.SCOPE_REQUEST`
