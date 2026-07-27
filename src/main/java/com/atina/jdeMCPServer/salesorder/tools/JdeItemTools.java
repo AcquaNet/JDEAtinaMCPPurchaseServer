@@ -1,6 +1,8 @@
 package com.atina.jdeMCPServer.salesorder.tools;
 
 import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
+import com.atina.jdeMCPServer.mcp.tasks.LongRunningTask;
+import com.atina.jdeMCPServer.mcp.tasks.LongRunningTaskRegistry;
 import com.atina.jdeMCPServer.salesorder.services.JdeSalesOrderClient;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import org.slf4j.Logger;
@@ -11,6 +13,8 @@ import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+
 @Component
 public class JdeItemTools {
 
@@ -20,16 +24,31 @@ public class JdeItemTools {
     private final String defaultUnitOfMeasure;
     private final String defaultProcessingVersion;
     private final McpProgressNotifications progressNotifications;
+    private final LongRunningTaskRegistry taskRegistry;
+    private final boolean asyncItemSearchEnabled;
+    private final long initialWaitSeconds;
+    private final long gatewayTimeoutMinutes;
+    private final long defaultPollIntervalMs;
 
     public JdeItemTools(
             JdeSalesOrderClient soClient,
             @Value("${jde.pricing.default-unit-of-measure:EA}") String defaultUnitOfMeasure,
             @Value("${jde.pricing.default-processing-version:ZJDE0001}") String defaultProcessingVersion,
-            McpProgressNotifications progressNotifications) {
+            McpProgressNotifications progressNotifications,
+            LongRunningTaskRegistry taskRegistry,
+            @Value("${jde.item-search.async.enabled:true}") boolean asyncItemSearchEnabled,
+            @Value("${jde.item-search.async.initial-wait-seconds:8}") long initialWaitSeconds,
+            @Value("${jde.atina.gateway.timeout-minutes:10}") long gatewayTimeoutMinutes,
+            @Value("${jde.mcp.tasks.default-poll-interval-ms:5000}") long defaultPollIntervalMs) {
         this.soClient = soClient;
         this.defaultUnitOfMeasure = defaultUnitOfMeasure;
         this.defaultProcessingVersion = defaultProcessingVersion;
         this.progressNotifications = progressNotifications;
+        this.taskRegistry = taskRegistry;
+        this.asyncItemSearchEnabled = asyncItemSearchEnabled;
+        this.initialWaitSeconds = initialWaitSeconds;
+        this.gatewayTimeoutMinutes = gatewayTimeoutMinutes;
+        this.defaultPollIntervalMs = defaultPollIntervalMs;
     }
 
     // =========================================================================
@@ -57,6 +76,11 @@ public class JdeItemTools {
               Red"). The search is a partial match, so a single fragment may return several items.
 
             IMPORTANT FOR THE ASSISTANT:
+            - This query can take a while against a busy JDE environment. If the response says the
+              search is still in progress, this is NOT an error -- simply call jde_search_items
+              again with the exact same itemSearchText after a short pause (the suggested wait is
+              included in the response) until you get the actual results. Never report "still in
+              progress" to the user as a failure.
             - Never invent or guess itemId values. Use ONLY the values returned by this tool.
             - The relevant fields in the response are, for each entry under
               listaDeValores.itemSearchDetails[]:
@@ -88,26 +112,56 @@ public class JdeItemTools {
         String searchText = itemSearchText.trim();
         log.info("Searching items by text '{}'", searchText);
 
-        progressNotifications.send(exchange, meta, 0, null,
-                "Buscando artículos en JDE, puede tardar unos segundos...");
-
-        try {
-            String response = soClient.searchItems(searchText);
-
-            return """
-                   Items matching "%s":
-                   %s
-                   """.formatted(searchText, response);
-
-        } catch (Exception e) {
-            log.error("Error searching items with text '{}'", searchText, e);
-
-            return """
-                   An error occurred while searching items with text "%s".
-                   Technical details have been logged in the MCP server.
-                   Ask the user to try again later or contact support.
-                   """.formatted(searchText);
+        if (!asyncItemSearchEnabled) {
+            progressNotifications.send(exchange, meta, 0, null,
+                    "Buscando artículos en JDE, puede tardar unos segundos...");
+            try {
+                String response = soClient.searchItems(searchText);
+                return """
+                       Items matching "%s":
+                       %s
+                       """.formatted(searchText, response);
+            } catch (Exception e) {
+                log.error("Error searching items with text '{}'", searchText, e);
+                return """
+                       An error occurred while searching items with text "%s".
+                       Technical details have been logged in the MCP server.
+                       Ask the user to try again later or contact support.
+                       """.formatted(searchText);
+            }
         }
+
+        String token = soClient.resolveSessionToken();
+        String key = "item-search|" + searchText;
+
+        LongRunningTask task = taskRegistry.getOrStart(
+                key,
+                Duration.ofMinutes(gatewayTimeoutMinutes + 1),
+                defaultPollIntervalMs,
+                Duration.ofSeconds(initialWaitSeconds),
+                () -> soClient.searchItemsWithToken(searchText, token));
+
+        return switch (task.status()) {
+            case WORKING, INPUT_REQUIRED -> """
+                    The search for items matching "%s" is still in progress (this can take a while \
+                    against a busy JDE environment). Call jde_search_items again with the exact same \
+                    itemSearchText in about %d seconds to get the results -- this is not an error.\
+                    """.formatted(searchText,
+                    (task.pollIntervalMs() != null ? task.pollIntervalMs() : defaultPollIntervalMs) / 1000);
+            case COMPLETED -> """
+                    Items matching "%s":
+                    %s
+                    """.formatted(searchText, (String) task.result());
+            case FAILED -> {
+                log.error("Error searching items with text '{}': {}", searchText, task.error());
+                yield """
+                      An error occurred while searching items with text "%s".
+                      Technical details have been logged in the MCP server.
+                      Ask the user to try again later or contact support.
+                      """.formatted(searchText);
+            }
+            case CANCELLED -> "The search was cancelled. Call jde_search_items again to retry.";
+        };
     }
 
     // =========================================================================

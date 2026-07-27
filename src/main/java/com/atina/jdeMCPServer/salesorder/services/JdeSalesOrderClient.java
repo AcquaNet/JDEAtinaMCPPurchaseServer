@@ -147,13 +147,32 @@ public class JdeSalesOrderClient {
      * itemId candidatos que luego consume el precio/disponibilidad.
      */
     public String searchItems(String itemSearchText) {
-
         log.info("Gateway item search for text '{}'", itemSearchText);
+        return executeGatewayOperation(OP_ITEM_SEARCH, itemSearchValue(itemSearchText));
+    }
 
+    /**
+     * Resuelve el token de sesión JDE actual -- pensado para ejecuciones que
+     * necesitan pasarlo como dato plano fuera del ciclo de vida del
+     * HttpServletRequest original (ver {@link #searchItemsWithToken}).
+     */
+    public String resolveSessionToken() {
+        return authService.getOrCreateToken();
+    }
+
+    /**
+     * Igual que {@link #searchItems} pero con un token ya resuelto (no lo
+     * resuelve internamente vía authService, que depende de
+     * RequestContextHolder -- ver {@link #executeGatewayOperationWithToken}).
+     */
+    public String searchItemsWithToken(String itemSearchText, String token) {
+        return executeGatewayOperationWithToken(OP_ITEM_SEARCH, itemSearchValue(itemSearchText), token);
+    }
+
+    private static Map<String, Object> itemSearchValue(String itemSearchText) {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("itemSearchText", itemSearchText);
-
-        return executeGatewayOperation(OP_ITEM_SEARCH, value);
+        return value;
     }
 
     /**
@@ -241,6 +260,19 @@ public class JdeSalesOrderClient {
                 () -> doExecuteGatewayOperation(operacionKey, value));
     }
 
+    /**
+     * Variante de {@link #executeGatewayOperation(String, Map)} con un token ya
+     * resuelto -- pensada para ejecuciones que corren fuera del ciclo de vida
+     * del HttpServletRequest original (ver {@link #resolveSessionToken()}),
+     * donde authService no tiene RequestContextHolder disponible. No llama
+     * authService.updateTokenFromResponse(...) por el mismo motivo.
+     */
+    private String executeGatewayOperationWithToken(String operacionKey, Map<String, Object> value, String token) {
+        return requestCoalescer.execute(
+                coalesceKey(operacionKey, value),
+                () -> postToGateway(operacionKey, value, token).getBody());
+    }
+
     private String coalesceKey(String operacionKey, Map<String, Object> value) {
         try {
             return operacionKey + "|" + objectMapper.writeValueAsString(value);
@@ -250,15 +282,19 @@ public class JdeSalesOrderClient {
     }
 
     private String doExecuteGatewayOperation(String operacionKey, Map<String, Object> value) {
-
         String token = authService.getOrCreateToken();
+        ResponseEntity<String> response = postToGateway(operacionKey, value, token);
+        authService.updateTokenFromResponse(response.getHeaders());
+        return response.getBody();
+    }
 
+    private ResponseEntity<String> postToGateway(String operacionKey, Map<String, Object> value, String token) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("operacionKey", operacionKey);
         body.put("listaDeValores", List.of(value));
         body.put("connectorName", "WS");
 
-        ResponseEntity<String> response = gatewayWebClient.post()
+        return gatewayWebClient.post()
                 .uri(gatewayBaseUrl + "/v1/operations/execute")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .header("Token", "null")
@@ -269,9 +305,5 @@ public class JdeSalesOrderClient {
                 .retrieve()
                 .toEntity(String.class)
                 .block();
-
-        authService.updateTokenFromResponse(response.getHeaders());
-
-        return response.getBody();
     }
 }
