@@ -2,7 +2,12 @@ package com.atina.jdeMCPServer.salesorder.services;
 
 import com.atina.jdeMCPServer.auth.JdeAuthService;
 import com.atina.jdeMCPServer.gateway.RequestCoalescer;
+import com.atina.jdeMCPServer.salesorder.model.CustomerSummary;
+import com.atina.jdeMCPServer.salesorder.model.ItemSummary;
+import com.atina.jdeMCPServer.salesorder.model.PriceQuote;
+import com.atina.jdeMCPServer.salesorder.model.WarehouseAvailability;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +21,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -112,7 +118,7 @@ public class JdeSalesOrderClient {
      * cuyo nombre contiene {@code entityName}. Es la base para obtener el ID
      * del cliente que luego consumen el detalle y el precio/disponibilidad.
      */
-    public String lookupAddressBookByName(String entityName) {
+    public List<CustomerSummary> lookupAddressBookByName(String entityName) {
 
         log.info("Gateway lookupAddressBook by name '{}'", entityName);
 
@@ -122,7 +128,19 @@ public class JdeSalesOrderClient {
         // de campo exactamente como está (tal cual la operación BSSV del Gateway).
         value.put("enityTypeCode", "C");
 
-        return executeGatewayOperation(OP_LOOKUP_ADDRESS_BOOK, value);
+        String raw = executeGatewayOperation(OP_LOOKUP_ADDRESS_BOOK, value);
+        JsonNode listaDeValores = parseListaDeValores(raw, OP_LOOKUP_ADDRESS_BOOK);
+        JsonNode results = listaDeValores.path("lookupAddressBookResult");
+
+        List<CustomerSummary> customers = new ArrayList<>();
+        if (results.isArray()) {
+            for (JsonNode item : results) {
+                customers.add(new CustomerSummary(
+                        item.path("entityName").asText("").trim(),
+                        item.path("entity").path("entityId").asInt()));
+            }
+        }
+        return customers;
     }
 
     /**
@@ -146,9 +164,10 @@ public class JdeSalesOrderClient {
      * Búsqueda de artículos por nombre (o fragmento de nombre): devuelve los
      * itemId candidatos que luego consume el precio/disponibilidad.
      */
-    public String searchItems(String itemSearchText) {
+    public List<ItemSummary> searchItems(String itemSearchText) {
         log.info("Gateway item search for text '{}'", itemSearchText);
-        return executeGatewayOperation(OP_ITEM_SEARCH, itemSearchValue(itemSearchText));
+        String raw = executeGatewayOperation(OP_ITEM_SEARCH, itemSearchValue(itemSearchText));
+        return parseItemSearchResults(raw);
     }
 
     /**
@@ -165,8 +184,9 @@ public class JdeSalesOrderClient {
      * resuelve internamente vía authService, que depende de
      * RequestContextHolder -- ver {@link #executeGatewayOperationWithToken}).
      */
-    public String searchItemsWithToken(String itemSearchText, String token) {
-        return executeGatewayOperationWithToken(OP_ITEM_SEARCH, itemSearchValue(itemSearchText), token);
+    public List<ItemSummary> searchItemsWithToken(String itemSearchText, String token) {
+        String raw = executeGatewayOperationWithToken(OP_ITEM_SEARCH, itemSearchValue(itemSearchText), token);
+        return parseItemSearchResults(raw);
     }
 
     private static Map<String, Object> itemSearchValue(String itemSearchText) {
@@ -175,13 +195,28 @@ public class JdeSalesOrderClient {
         return value;
     }
 
+    private List<ItemSummary> parseItemSearchResults(String rawJson) {
+        JsonNode listaDeValores = parseListaDeValores(rawJson, OP_ITEM_SEARCH);
+        JsonNode results = listaDeValores.path("itemSearchDetails");
+
+        List<ItemSummary> items = new ArrayList<>();
+        if (results.isArray()) {
+            for (JsonNode item : results) {
+                items.add(new ItemSummary(
+                        item.path("itemCatalog").asInt(),
+                        item.path("itemDescription1").asText("").trim()));
+            }
+        }
+        return items;
+    }
+
     /**
      * Precio y disponibilidad por almacén de un artículo para un cliente
      * (operación BSSV getItemPriceAndAvailabilityV3).
      */
-    public String getItemPriceAndAvailability(int itemId, String businessUnit, int entityId,
-                                               String currencyCode, Number quantity,
-                                               String unitOfMeasure, String processingVersion) {
+    public PriceQuote getItemPriceAndAvailability(int itemId, String businessUnit, int entityId,
+                                                   String currencyCode, Number quantity,
+                                                   String unitOfMeasure, String processingVersion) {
 
         log.info("Gateway item price+availability for itemId {} / entityId {}", itemId, entityId);
 
@@ -206,16 +241,35 @@ public class JdeSalesOrderClient {
         value.put("currencyCode", currencyCode);
         value.put("processing", processing);
 
-        return executeGatewayOperation(OP_GET_ITEM_PRICE_AVAILABILITY, value);
+        String raw = executeGatewayOperation(OP_GET_ITEM_PRICE_AVAILABILITY, value);
+        JsonNode listaDeValores = parseListaDeValores(raw, OP_GET_ITEM_PRICE_AVAILABILITY);
+        JsonNode productResult = listaDeValores.path("product");
+
+        List<WarehouseAvailability> availability = new ArrayList<>();
+        JsonNode availabilityNode = productResult.path("availability");
+        if (availabilityNode.isArray()) {
+            for (JsonNode row : availabilityNode) {
+                JsonNode warehouse = row.path("warehouse");
+                availability.add(new WarehouseAvailability(
+                        warehouse.path("warehouse").asText("").trim(),
+                        warehouse.path("address").path("mailingName").asText("").trim(),
+                        row.path("quantityAvailable").decimalValue()));
+            }
+        }
+
+        return new PriceQuote(
+                productResult.path("priceUnit").decimalValue(),
+                productResult.path("priceExtended").decimalValue(),
+                availability);
     }
 
     /**
      * Precio de un artículo para un cliente, sin disponibilidad (operación
      * BSSV getCustomerItemPrice).
      */
-    public String getCustomerItemPrice(int itemId, String businessUnit, int entityId,
-                                        String currencyCode, Number quantity,
-                                        String unitOfMeasure, String processingVersion) {
+    public PriceQuote getCustomerItemPrice(int itemId, String businessUnit, int entityId,
+                                            String currencyCode, Number quantity,
+                                            String unitOfMeasure, String processingVersion) {
 
         log.info("Gateway customer item price for itemId {} / entityId {}", itemId, entityId);
 
@@ -244,7 +298,13 @@ public class JdeSalesOrderClient {
         value.put("businessUnit", businessUnit);
         value.put("processing", processing);
 
-        return executeGatewayOperation(OP_GET_CUSTOMER_ITEM_PRICE, value);
+        String raw = executeGatewayOperation(OP_GET_CUSTOMER_ITEM_PRICE, value);
+        JsonNode listaDeValores = parseListaDeValores(raw, OP_GET_CUSTOMER_ITEM_PRICE);
+
+        return new PriceQuote(
+                listaDeValores.path("priceUnitDomestic").decimalValue(),
+                listaDeValores.path("priceExtendedDomestic").decimalValue(),
+                List.of());
     }
 
     /**
@@ -271,6 +331,15 @@ public class JdeSalesOrderClient {
         return requestCoalescer.execute(
                 coalesceKey(operacionKey, value),
                 () -> postToGateway(operacionKey, value, token).getBody());
+    }
+
+    private JsonNode parseListaDeValores(String rawJson, String operacionKey) {
+        try {
+            return objectMapper.readTree(rawJson).path("listaDeValores");
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(
+                    "Respuesta inválida del Gateway de Atina para la operación " + operacionKey, e);
+        }
     }
 
     private String coalesceKey(String operacionKey, Map<String, Object> value) {

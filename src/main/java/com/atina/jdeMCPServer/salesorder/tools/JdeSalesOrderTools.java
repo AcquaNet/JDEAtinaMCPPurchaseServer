@@ -1,6 +1,9 @@
 package com.atina.jdeMCPServer.salesorder.tools;
 
 import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
+import com.atina.jdeMCPServer.salesorder.model.CustomerLookupResult;
+import com.atina.jdeMCPServer.salesorder.model.CustomerSummary;
+import com.atina.jdeMCPServer.salesorder.model.ToolStatus;
 import com.atina.jdeMCPServer.salesorder.services.JdeSalesOrderClient;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import org.slf4j.Logger;
@@ -9,6 +12,8 @@ import org.springaicommunity.mcp.annotation.McpMeta;
 import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 @Component
 public class JdeSalesOrderTools {
@@ -48,24 +53,23 @@ public class JdeSalesOrderTools {
             - entityName: the customer name or a fragment of it (e.g. "Capital"). The search is a
               partial match, so a single fragment may return several customers.
 
+            OUTPUT (structured JSON, see outputSchema):
+            - status "OK": customers[] has the matches, each with name and addressBookNumber.
+            - status "FAILED": message explains the error; retrying is safe.
+            - status "INVALID_REQUEST": entityName was missing or blank.
+
             IMPORTANT FOR THE ASSISTANT:
             - Never invent or guess AB Numbers. Use ONLY the values returned by this tool.
-            - The relevant fields in the response are, for each entry under
-              listaDeValores.lookupAddressBookResult[]:
-                • Name     -> entityName
-                • AB Number -> entity.entityId
-            - Present the results in a **Markdown table**, one row per customer, with columns:
-                • Customer Name (entityName, trimmed)
-                • AB Number (entity.entityId)
-            - The tool can return ONE or MANY matches:
+            - customers[] can have ONE or MANY entries:
                 • If exactly one customer matches, state it clearly and offer to continue
                   (e.g. get the customer detail or a price for an article).
-                • If several match, list them all and ASK the user which AB Number they mean before
-                  chaining into any follow-up tool. Do not assume the first one.
+                • If several match, list them all and ASK the user which addressBookNumber they mean
+                  before chaining into any follow-up tool. Do not assume the first one.
                 • If none match, say so and ask the user to refine or confirm the name.
-            """
+            """,
+            generateOutputSchema = true
     )
-    public String lookupCustomerByName(
+    public CustomerLookupResult lookupCustomerByName(
             @McpToolParam(
                     description = "Customer name or a fragment of it, e.g. 'Capital'. Partial match; may return several customers."
             )
@@ -74,7 +78,8 @@ public class JdeSalesOrderTools {
             McpSyncServerExchange exchange
     ) {
         if (entityName == null || entityName.isBlank()) {
-            return "Please provide a customer name (or part of it) to search for.";
+            return new CustomerLookupResult(ToolStatus.INVALID_REQUEST,
+                    "Please provide a customer name (or part of it) to search for.", List.of());
         }
 
         String name = entityName.trim();
@@ -84,21 +89,17 @@ public class JdeSalesOrderTools {
                 "Buscando clientes en JDE, puede tardar unos segundos...");
 
         try {
-            String response = soClient.lookupAddressBookByName(name);
-
-            return """
-                   Customers matching name "%s":
-                   %s
-                   """.formatted(name, response);
+            List<CustomerSummary> customers = soClient.lookupAddressBookByName(name);
+            return new CustomerLookupResult(ToolStatus.OK, "", customers);
 
         } catch (Exception e) {
             log.error("Error looking up customers by name '{}'", name, e);
 
-            return """
-                   An error occurred while looking up customers with name "%s".
-                   Technical details have been logged in the MCP server.
-                   Ask the user to try again later or contact support.
-                   """.formatted(name);
+            return new CustomerLookupResult(ToolStatus.FAILED,
+                    "An error occurred while looking up customers with name \"" + name + "\". "
+                            + "Technical details have been logged in the MCP server. "
+                            + "Ask the user to try again later or contact support.",
+                    List.of());
         }
     }
 

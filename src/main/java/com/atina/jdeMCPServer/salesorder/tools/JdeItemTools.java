@@ -3,6 +3,11 @@ package com.atina.jdeMCPServer.salesorder.tools;
 import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTask;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTaskRegistry;
+import com.atina.jdeMCPServer.salesorder.model.ItemPriceResult;
+import com.atina.jdeMCPServer.salesorder.model.ItemSearchResult;
+import com.atina.jdeMCPServer.salesorder.model.ItemSummary;
+import com.atina.jdeMCPServer.salesorder.model.PriceQuote;
+import com.atina.jdeMCPServer.salesorder.model.ToolStatus;
 import com.atina.jdeMCPServer.salesorder.services.JdeSalesOrderClient;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import org.slf4j.Logger;
@@ -13,7 +18,9 @@ import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.List;
 
 @Component
 public class JdeItemTools {
@@ -75,29 +82,26 @@ public class JdeItemTools {
             - itemSearchText: the item name/description or a fragment of it (e.g. "Bike, Mountain
               Red"). The search is a partial match, so a single fragment may return several items.
 
+            OUTPUT (structured JSON, see outputSchema):
+            - status "IN_PROGRESS": the search is still running against a busy JDE environment. This
+              is NOT an error -- call jde_search_items again with the exact same itemSearchText after
+              pollAfterSeconds to get the actual results. Never report this to the user as a failure.
+            - status "OK": items[] has the matches, each with itemId and description.
+            - status "FAILED" / "CANCELLED": message explains what happened; retrying is safe.
+            - status "INVALID_REQUEST": itemSearchText was missing or blank.
+
             IMPORTANT FOR THE ASSISTANT:
-            - This query can take a while against a busy JDE environment. If the response says the
-              search is still in progress, this is NOT an error -- simply call jde_search_items
-              again with the exact same itemSearchText after a short pause (the suggested wait is
-              included in the response) until you get the actual results. Never report "still in
-              progress" to the user as a failure.
             - Never invent or guess itemId values. Use ONLY the values returned by this tool.
-            - The relevant fields in the response are, for each entry under
-              listaDeValores.itemSearchDetails[]:
-                • Item ID     -> itemId
-                • Description -> itemDescription1 (trimmed)
-            - Present the results in a **Markdown table**, one row per item, with columns:
-                • Item ID (itemId)
-                • Description (itemDescription1, trimmed)
-            - The tool can return ONE or MANY matches:
+            - items[] can have ONE or MANY entries:
                 • If exactly one item matches, state it clearly and offer to continue (e.g. check
                   its price for a customer).
                 • If several match, list them all and ASK the user which itemId they mean before
                   chaining into jde_get_item_price. Do not assume the first one.
                 • If none match, say so and ask the user to refine the search text.
-            """
+            """,
+            generateOutputSchema = true
     )
-    public String searchItems(
+    public ItemSearchResult searchItems(
             @McpToolParam(
                     description = "Item name/description or a fragment of it, e.g. 'Bike, Mountain Red'. Partial match; may return several items."
             )
@@ -106,7 +110,8 @@ public class JdeItemTools {
             McpSyncServerExchange exchange
     ) {
         if (itemSearchText == null || itemSearchText.isBlank()) {
-            return "Please provide an item name (or part of it) to search for.";
+            return new ItemSearchResult(ToolStatus.INVALID_REQUEST,
+                    "Please provide an item name (or part of it) to search for.", 0, List.of());
         }
 
         String searchText = itemSearchText.trim();
@@ -116,18 +121,15 @@ public class JdeItemTools {
             progressNotifications.send(exchange, meta, 0, null,
                     "Buscando artículos en JDE, puede tardar unos segundos...");
             try {
-                String response = soClient.searchItems(searchText);
-                return """
-                       Items matching "%s":
-                       %s
-                       """.formatted(searchText, response);
+                List<ItemSummary> items = soClient.searchItems(searchText);
+                return new ItemSearchResult(ToolStatus.OK, "", 0, items);
             } catch (Exception e) {
                 log.error("Error searching items with text '{}'", searchText, e);
-                return """
-                       An error occurred while searching items with text "%s".
-                       Technical details have been logged in the MCP server.
-                       Ask the user to try again later or contact support.
-                       """.formatted(searchText);
+                return new ItemSearchResult(ToolStatus.FAILED,
+                        "An error occurred while searching items with text \"" + searchText + "\". "
+                                + "Technical details have been logged in the MCP server. "
+                                + "Ask the user to try again later or contact support.",
+                        0, List.of());
             }
         }
 
@@ -142,25 +144,29 @@ public class JdeItemTools {
                 () -> soClient.searchItemsWithToken(searchText, token));
 
         return switch (task.status()) {
-            case WORKING, INPUT_REQUIRED -> """
-                    The search for items matching "%s" is still in progress (this can take a while \
-                    against a busy JDE environment). Call jde_search_items again with the exact same \
-                    itemSearchText in about %d seconds to get the results -- this is not an error.\
-                    """.formatted(searchText,
-                    (task.pollIntervalMs() != null ? task.pollIntervalMs() : defaultPollIntervalMs) / 1000);
-            case COMPLETED -> """
-                    Items matching "%s":
-                    %s
-                    """.formatted(searchText, (String) task.result());
+            case WORKING, INPUT_REQUIRED -> new ItemSearchResult(
+                    ToolStatus.IN_PROGRESS,
+                    "The search for items matching \"" + searchText + "\" is still in progress (this can "
+                            + "take a while against a busy JDE environment). Call jde_search_items again "
+                            + "with the exact same itemSearchText after pollAfterSeconds to get the "
+                            + "results -- this is not an error.",
+                    (int) ((task.pollIntervalMs() != null ? task.pollIntervalMs() : defaultPollIntervalMs) / 1000),
+                    List.of());
+            case COMPLETED -> {
+                @SuppressWarnings("unchecked")
+                List<ItemSummary> items = (List<ItemSummary>) task.result();
+                yield new ItemSearchResult(ToolStatus.OK, "", 0, items);
+            }
             case FAILED -> {
                 log.error("Error searching items with text '{}': {}", searchText, task.error());
-                yield """
-                      An error occurred while searching items with text "%s".
-                      Technical details have been logged in the MCP server.
-                      Ask the user to try again later or contact support.
-                      """.formatted(searchText);
+                yield new ItemSearchResult(ToolStatus.FAILED,
+                        "An error occurred while searching items with text \"" + searchText + "\". "
+                                + "Technical details have been logged in the MCP server. "
+                                + "Ask the user to try again later or contact support.",
+                        0, List.of());
             }
-            case CANCELLED -> "The search was cancelled. Call jde_search_items again to retry.";
+            case CANCELLED -> new ItemSearchResult(ToolStatus.CANCELLED,
+                    "The search was cancelled. Call jde_search_items again to retry.", 0, List.of());
         };
     }
 
@@ -204,28 +210,23 @@ public class JdeItemTools {
             - returnAvailability: "Y" to also return warehouse stock availability, "N" for price
               only. Optional, defaults to "N".
 
+            OUTPUT (structured JSON, see outputSchema):
+            - status "OK": unitPrice / extendedPrice / currencyCode are always populated.
+              availability[] (warehouseCode, warehouseName, quantityAvailable) is populated only
+              when returnAvailability = "Y" was requested; otherwise it is an empty array.
+            - status "INVALID_REQUEST": message explains which required input is missing/invalid.
+            - status "FAILED": message explains the error; retrying is safe.
+
             IMPORTANT FOR THE ASSISTANT:
             - Never invent entityId, itemId, businessUnit or currencyCode. Resolve them via the
               other tools first and confirm with the user if ambiguous.
             - If the user did not say whether they want availability, ask them (Y/N) before
               calling this tool, unless the context makes it obvious.
-            - When returnAvailability = "Y", the response is under listaDeValores.product:
-                • Unit Price             -> priceUnit
-                • Extended Price         -> priceExtended
-                • Availability, one row per warehouse under availability[]:
-                    - Warehouse       -> warehouse.warehouse
-                    - Warehouse Name  -> warehouse.address.mailingName (trimmed)
-                    - Qty Available   -> quantityAvailable
-              Present the price as a key/value Markdown table, and availability (if present) as
-              its own Markdown table with columns Warehouse, Warehouse Name, Qty Available.
-            - When returnAvailability = "N", the response is directly under listaDeValores:
-                • Unit Price     -> priceUnitDomestic
-                • Extended Price -> priceExtendedDomestic
-              Present these as a key/value Markdown table.
             - Always state the currency alongside any price shown.
-            """
+            """,
+            generateOutputSchema = true
     )
-    public String getItemPrice(
+    public ItemPriceResult getItemPrice(
             @McpToolParam(description = "Customer AB Number (entityId), from jde_lookup_customer_by_name, e.g. 4242.")
             Integer entityId,
             @McpToolParam(description = "JDE business unit / warehouse code, e.g. '10'. Sent to JDE exactly as given.")
@@ -245,22 +246,37 @@ public class JdeItemTools {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        int safeItemId = itemId != null ? itemId : 0;
+        int safeEntityId = entityId != null ? entityId : 0;
+        String safeBusinessUnit = businessUnit != null ? businessUnit : "";
+        String safeCurrencyCode = currencyCode != null ? currencyCode : "";
+
         if (entityId == null || entityId <= 0) {
-            return "Please provide a valid customer AB Number (positive integer). "
-                    + "If you only have the customer name, look it up first with jde_lookup_customer_by_name.";
+            return new ItemPriceResult(ToolStatus.INVALID_REQUEST,
+                    "Please provide a valid customer AB Number (positive integer). "
+                            + "If you only have the customer name, look it up first with jde_lookup_customer_by_name.",
+                    safeItemId, safeEntityId, safeBusinessUnit, safeCurrencyCode, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
         }
         if (businessUnit == null || businessUnit.isBlank()) {
-            return "Please provide the business unit / warehouse code to price this item against.";
+            return new ItemPriceResult(ToolStatus.INVALID_REQUEST,
+                    "Please provide the business unit / warehouse code to price this item against.",
+                    safeItemId, safeEntityId, safeBusinessUnit, safeCurrencyCode, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
         }
         if (itemId == null || itemId <= 0) {
-            return "Please provide a valid item id (positive integer). "
-                    + "If you only have the item description, look it up first with jde_search_items.";
+            return new ItemPriceResult(ToolStatus.INVALID_REQUEST,
+                    "Please provide a valid item id (positive integer). "
+                            + "If you only have the item description, look it up first with jde_search_items.",
+                    safeItemId, safeEntityId, safeBusinessUnit, safeCurrencyCode, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
         }
         if (currencyCode == null || currencyCode.isBlank()) {
-            return "Please provide the customer's currency code (e.g. 'USD').";
+            return new ItemPriceResult(ToolStatus.INVALID_REQUEST,
+                    "Please provide the customer's currency code (e.g. 'USD').",
+                    safeItemId, safeEntityId, safeBusinessUnit, safeCurrencyCode, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
         }
         if (quantity == null || quantity <= 0) {
-            return "Please provide a valid quantity (greater than zero).";
+            return new ItemPriceResult(ToolStatus.INVALID_REQUEST,
+                    "Please provide a valid quantity (greater than zero).",
+                    safeItemId, safeEntityId, safeBusinessUnit, safeCurrencyCode, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
         }
 
         String uom = (unitOfMeasure != null && !unitOfMeasure.isBlank()) ? unitOfMeasure : defaultUnitOfMeasure;
@@ -275,23 +291,21 @@ public class JdeItemTools {
                 "Consultando precio en JDE, puede tardar unos segundos...");
 
         try {
-            String response = withAvailability
+            PriceQuote quote = withAvailability
                     ? soClient.getItemPriceAndAvailability(itemId, businessUnit, entityId, currencyCode, quantity, uom, procVersion)
                     : soClient.getCustomerItemPrice(itemId, businessUnit, entityId, currencyCode, quantity, uom, procVersion);
 
-            return """
-                   Price for item %d / customer %d (business unit '%s', availability=%s):
-                   %s
-                   """.formatted(itemId, entityId, businessUnit, withAvailability ? "Y" : "N", response);
+            return new ItemPriceResult(ToolStatus.OK, "", itemId, entityId, businessUnit, currencyCode,
+                    quote.unitPrice(), quote.extendedPrice(), quote.availability());
 
         } catch (Exception e) {
             log.error("Error retrieving price for itemId {} / entityId {}", itemId, entityId, e);
 
-            return """
-                   An error occurred while retrieving the price for item %d / customer %d.
-                   Technical details have been logged in the MCP server.
-                   Ask the user to try again later or contact support.
-                   """.formatted(itemId, entityId);
+            return new ItemPriceResult(ToolStatus.FAILED,
+                    "An error occurred while retrieving the price for item " + itemId + " / customer "
+                            + entityId + ". Technical details have been logged in the MCP server. "
+                            + "Ask the user to try again later or contact support.",
+                    itemId, entityId, businessUnit, currencyCode, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
         }
     }
 }
