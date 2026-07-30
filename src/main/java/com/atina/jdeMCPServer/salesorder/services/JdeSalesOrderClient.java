@@ -137,17 +137,32 @@ public class JdeSalesOrderClient {
      * del cliente que luego consumen el detalle y el precio/disponibilidad.
      */
     public List<CustomerSummary> lookupAddressBookByName(String entityName) {
+        String raw = executeGatewayOperation(OP_LOOKUP_ADDRESS_BOOK, lookupAddressBookValue(entityName));
+        return parseLookupAddressBookResults(raw);
+    }
 
+    /**
+     * Igual que {@link #lookupAddressBookByName} pero con un token ya resuelto
+     * (no lo resuelve internamente vía authService, que depende de
+     * RequestContextHolder -- ver {@link #executeGatewayOperationWithToken}).
+     */
+    public List<CustomerSummary> lookupAddressBookByNameWithToken(String entityName, String token) {
+        String raw = executeGatewayOperationWithToken(OP_LOOKUP_ADDRESS_BOOK, lookupAddressBookValue(entityName), token);
+        return parseLookupAddressBookResults(raw);
+    }
+
+    private static Map<String, Object> lookupAddressBookValue(String entityName) {
         log.info("Gateway lookupAddressBook by name '{}'", entityName);
-
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("entityName", entityName);
         // Tipo de entidad C = Cliente (Customer). El backend espera el nombre
         // de campo exactamente como está (tal cual la operación BSSV del Gateway).
         value.put("enityTypeCode", "C");
+        return value;
+    }
 
-        String raw = executeGatewayOperation(OP_LOOKUP_ADDRESS_BOOK, value);
-        JsonNode listaDeValores = parseListaDeValores(raw, OP_LOOKUP_ADDRESS_BOOK);
+    private List<CustomerSummary> parseLookupAddressBookResults(String rawJson) {
+        JsonNode listaDeValores = parseListaDeValores(rawJson, OP_LOOKUP_ADDRESS_BOOK);
         JsonNode results = listaDeValores.path("lookupAddressBookResult");
 
         List<CustomerSummary> customers = new ArrayList<>();
@@ -167,16 +182,31 @@ public class JdeSalesOrderClient {
      * tax id, etc.
      */
     public CustomerDetail getCustomerDetail(int entityId) {
+        String raw = executeGatewayOperation(OP_GET_CUSTOMER, customerDetailValue(entityId));
+        return parseCustomerDetail(raw);
+    }
 
+    /**
+     * Igual que {@link #getCustomerDetail} pero con un token ya resuelto (no lo
+     * resuelve internamente vía authService, que depende de
+     * RequestContextHolder -- ver {@link #executeGatewayOperationWithToken}).
+     */
+    public CustomerDetail getCustomerDetailWithToken(int entityId, String token) {
+        String raw = executeGatewayOperationWithToken(OP_GET_CUSTOMER, customerDetailValue(entityId), token);
+        return parseCustomerDetail(raw);
+    }
+
+    private static Map<String, Object> customerDetailValue(int entityId) {
         log.info("Gateway getCustomer detail for entityId {}", entityId);
-
         Map<String, Object> entity = new LinkedHashMap<>();
         entity.put("entityId", entityId);
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("entity", entity);
+        return value;
+    }
 
-        String raw = executeGatewayOperation(OP_GET_CUSTOMER, value);
-        JsonNode listaDeValores = parseListaDeValores(raw, OP_GET_CUSTOMER);
+    private CustomerDetail parseCustomerDetail(String rawJson) {
+        JsonNode listaDeValores = parseListaDeValores(rawJson, OP_GET_CUSTOMER);
         JsonNode customer = listaDeValores.path("customerResults").path(0);
 
         CustomerAddress address = parseCustomerAddress(customer.path("address"));
