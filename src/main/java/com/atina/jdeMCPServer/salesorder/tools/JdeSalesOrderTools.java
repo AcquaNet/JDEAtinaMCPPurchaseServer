@@ -1,6 +1,8 @@
 package com.atina.jdeMCPServer.salesorder.tools;
 
 import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
+import com.atina.jdeMCPServer.salesorder.model.CustomerDetail;
+import com.atina.jdeMCPServer.salesorder.model.CustomerDetailResult;
 import com.atina.jdeMCPServer.salesorder.model.CustomerLookupResult;
 import com.atina.jdeMCPServer.salesorder.model.CustomerSummary;
 import com.atina.jdeMCPServer.salesorder.model.ToolStatus;
@@ -114,7 +116,7 @@ public class JdeSalesOrderTools {
             PURPOSE:
             - Returns rich master data for a single customer: name and tax id, address, financial
               amounts (credit limit, open amount, due amount), billing instructions, company,
-              credit information, currency, phone numbers, etc.
+              credit information, currency, language.
 
             WHEN TO USE:
             - The user wants to inspect a customer's master data, address, credit or billing setup.
@@ -124,42 +126,25 @@ public class JdeSalesOrderTools {
             INPUT:
             - entityId: the customer's Address Book number (AB Number), e.g. 4242.
 
+            OUTPUT (structured JSON, see outputSchema):
+            - status "OK": customer has the full detail -- name, taxId, company, currencyCode,
+              languageCode, address (addressLine1..4, city, stateCode, postalCode, countryCode),
+              credit (creditLimit, openAmount, dueAmount, creditManagerCode,
+              creditCheckLevelCode, holdCode).
+            - status "INVALID_REQUEST": entityId was missing or invalid.
+            - status "FAILED": message explains the error; retrying is safe.
+
             IMPORTANT FOR THE ASSISTANT:
             - Never invent or guess an AB Number. If it is missing or ambiguous, resolve it with
               jde_lookup_customer_by_name and confirm with the user when several customers match.
-            - The detail lives under listaDeValores.customerResults[0]. Present it grouped in
-              **Markdown tables** (trim padding spaces from text values):
-
-              1) GENERAL — key/value table:
-                 • Name -> entityName
-                 • AB Number -> entity.entityId
-                 • Tax ID -> entity.entityTaxId
-                 • Company -> company
-                 • Currency -> invoice.currencyCode
-                 • Language -> languageCode
-
-              2) ADDRESS — key/value table:
-                 • Address -> address.addressLine1 (+ line2..4 if present)
-                 • City -> address.city
-                 • State -> address.stateCode
-                 • Postal Code -> address.postalCode
-                 • Country -> address.countryCode
-
-              3) CREDIT & AMOUNTS — key/value table:
-                 • Credit Limit -> amounts.amountCreditLimit (or credit.amountCreditLimit)
-                 • Open Amount -> amounts.amountOpen
-                 • Due Amount -> amounts.amountDue
-                 • Credit Manager -> credit.creditManagerCode
-                 • Credit Check Level -> billingInstructions.creditCheckLevelCode
-                 • Hold Code -> billingInstructions.holdCode
-
-            AFTER THE TABLES:
-            - Add a short 1-3 sentence summary of the customer's standing (e.g. large open balance,
-              near/over credit limit, on hold) and offer a relevant next step, such as checking
-              price/availability of an article for this customer.
-            """
+            - After presenting the detail, add a short 1-3 sentence summary of the customer's
+              standing (e.g. large open balance, near/over credit limit, on hold) and offer a
+              relevant next step, such as checking price/availability of an article for this
+              customer.
+            """,
+            generateOutputSchema = true
     )
-    public String getCustomerDetail(
+    public CustomerDetailResult getCustomerDetail(
             @McpToolParam(
                     description = "JDE customer Address Book number (AB Number / entityId), e.g. 4242."
             )
@@ -168,8 +153,10 @@ public class JdeSalesOrderTools {
             McpSyncServerExchange exchange
     ) {
         if (entityId == null || entityId <= 0) {
-            return "Please provide a valid customer AB Number (positive integer). "
-                    + "If you only have the customer name, look it up first with jde_lookup_customer_by_name.";
+            return new CustomerDetailResult(ToolStatus.INVALID_REQUEST,
+                    "Please provide a valid customer AB Number (positive integer). "
+                            + "If you only have the customer name, look it up first with jde_lookup_customer_by_name.",
+                    CustomerDetail.empty());
         }
 
         log.info("Requesting customer detail for entityId {}", entityId);
@@ -178,21 +165,17 @@ public class JdeSalesOrderTools {
                 "Consultando el detalle del cliente en JDE, puede tardar unos segundos...");
 
         try {
-            String response = soClient.getCustomerDetail(entityId);
-
-            return """
-                   Customer detail for AB Number %d:
-                   %s
-                   """.formatted(entityId, response);
+            CustomerDetail detail = soClient.getCustomerDetail(entityId);
+            return new CustomerDetailResult(ToolStatus.OK, "", detail);
 
         } catch (Exception e) {
             log.error("Error retrieving customer detail for entityId {}", entityId, e);
 
-            return """
-                   An error occurred while retrieving the detail for customer AB Number %d.
-                   Technical details have been logged in the MCP server.
-                   Ask the user to try again later or contact support.
-                   """.formatted(entityId);
+            return new CustomerDetailResult(ToolStatus.FAILED,
+                    "An error occurred while retrieving the detail for customer AB Number " + entityId + ". "
+                            + "Technical details have been logged in the MCP server. "
+                            + "Ask the user to try again later or contact support.",
+                    CustomerDetail.empty());
         }
     }
 }

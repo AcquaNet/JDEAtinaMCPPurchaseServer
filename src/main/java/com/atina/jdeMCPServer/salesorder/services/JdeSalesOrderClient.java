@@ -2,6 +2,9 @@ package com.atina.jdeMCPServer.salesorder.services;
 
 import com.atina.jdeMCPServer.auth.JdeAuthService;
 import com.atina.jdeMCPServer.gateway.RequestCoalescer;
+import com.atina.jdeMCPServer.salesorder.model.CustomerAddress;
+import com.atina.jdeMCPServer.salesorder.model.CustomerCreditInfo;
+import com.atina.jdeMCPServer.salesorder.model.CustomerDetail;
 import com.atina.jdeMCPServer.salesorder.model.CustomerSummary;
 import com.atina.jdeMCPServer.salesorder.model.ItemSummary;
 import com.atina.jdeMCPServer.salesorder.model.PriceQuote;
@@ -148,7 +151,7 @@ public class JdeSalesOrderClient {
      * dirección, importes, instrucciones de facturación, company, crédito,
      * tax id, etc.
      */
-    public String getCustomerDetail(int entityId) {
+    public CustomerDetail getCustomerDetail(int entityId) {
 
         log.info("Gateway getCustomer detail for entityId {}", entityId);
 
@@ -157,7 +160,52 @@ public class JdeSalesOrderClient {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("entity", entity);
 
-        return executeGatewayOperation(OP_GET_CUSTOMER, value);
+        String raw = executeGatewayOperation(OP_GET_CUSTOMER, value);
+        JsonNode listaDeValores = parseListaDeValores(raw, OP_GET_CUSTOMER);
+        JsonNode customer = listaDeValores.path("customerResults").path(0);
+
+        CustomerAddress address = parseCustomerAddress(customer.path("address"));
+        CustomerCreditInfo credit = parseCustomerCreditInfo(customer);
+
+        return new CustomerDetail(
+                customer.path("entity").path("entityId").asInt(),
+                customer.path("entityName").asText("").trim(),
+                customer.path("entity").path("entityTaxId").asText("").trim(),
+                customer.path("company").asText("").trim(),
+                customer.path("invoice").path("currencyCode").asText("").trim(),
+                customer.path("languageCode").asText("").trim(),
+                address,
+                credit);
+    }
+
+    private static CustomerAddress parseCustomerAddress(JsonNode addressNode) {
+        return new CustomerAddress(
+                addressNode.path("addressLine1").asText("").trim(),
+                addressNode.path("addressLine2").asText("").trim(),
+                addressNode.path("addressLine3").asText("").trim(),
+                addressNode.path("addressLine4").asText("").trim(),
+                addressNode.path("city").asText("").trim(),
+                addressNode.path("stateCode").asText("").trim(),
+                addressNode.path("postalCode").asText("").trim(),
+                addressNode.path("countryCode").asText("").trim());
+    }
+
+    private static CustomerCreditInfo parseCustomerCreditInfo(JsonNode customer) {
+        // El campo de credit limit se vio documentado en dos ubicaciones posibles
+        // segun la version de la operacion BSSV -- se intenta amounts.* primero y
+        // se cae a credit.* si no esta.
+        JsonNode creditLimitNode = customer.path("amounts").path("amountCreditLimit");
+        if (creditLimitNode.isMissingNode() || creditLimitNode.isNull()) {
+            creditLimitNode = customer.path("credit").path("amountCreditLimit");
+        }
+
+        return new CustomerCreditInfo(
+                creditLimitNode.decimalValue(),
+                customer.path("amounts").path("amountOpen").decimalValue(),
+                customer.path("amounts").path("amountDue").decimalValue(),
+                customer.path("credit").path("creditManagerCode").asText("").trim(),
+                customer.path("billingInstructions").path("creditCheckLevelCode").asText("").trim(),
+                customer.path("billingInstructions").path("holdCode").asText("").trim());
     }
 
     /**
