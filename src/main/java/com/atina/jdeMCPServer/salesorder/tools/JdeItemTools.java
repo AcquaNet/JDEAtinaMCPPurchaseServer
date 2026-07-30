@@ -3,6 +3,8 @@ package com.atina.jdeMCPServer.salesorder.tools;
 import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTask;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTaskRegistry;
+import com.atina.jdeMCPServer.salesorder.model.ItemListPriceEntry;
+import com.atina.jdeMCPServer.salesorder.model.ItemListPriceResult;
 import com.atina.jdeMCPServer.salesorder.model.ItemPriceResult;
 import com.atina.jdeMCPServer.salesorder.model.ItemSearchResult;
 import com.atina.jdeMCPServer.salesorder.model.ItemSummary;
@@ -34,6 +36,8 @@ public class JdeItemTools {
     private final LongRunningTaskRegistry taskRegistry;
     private final boolean asyncItemSearchEnabled;
     private final long initialWaitSeconds;
+    private final boolean asyncItemListPriceEnabled;
+    private final long itemListPriceInitialWaitSeconds;
     private final long gatewayTimeoutMinutes;
     private final long defaultPollIntervalMs;
 
@@ -45,6 +49,8 @@ public class JdeItemTools {
             LongRunningTaskRegistry taskRegistry,
             @Value("${jde.item-search.async.enabled:true}") boolean asyncItemSearchEnabled,
             @Value("${jde.item-search.async.initial-wait-seconds:8}") long initialWaitSeconds,
+            @Value("${jde.item-list-price.async.enabled:true}") boolean asyncItemListPriceEnabled,
+            @Value("${jde.item-list-price.async.initial-wait-seconds:8}") long itemListPriceInitialWaitSeconds,
             @Value("${jde.atina.gateway.timeout-minutes:10}") long gatewayTimeoutMinutes,
             @Value("${jde.mcp.tasks.default-poll-interval-ms:5000}") long defaultPollIntervalMs) {
         this.soClient = soClient;
@@ -54,6 +60,8 @@ public class JdeItemTools {
         this.taskRegistry = taskRegistry;
         this.asyncItemSearchEnabled = asyncItemSearchEnabled;
         this.initialWaitSeconds = initialWaitSeconds;
+        this.asyncItemListPriceEnabled = asyncItemListPriceEnabled;
+        this.itemListPriceInitialWaitSeconds = itemListPriceInitialWaitSeconds;
         this.gatewayTimeoutMinutes = gatewayTimeoutMinutes;
         this.defaultPollIntervalMs = defaultPollIntervalMs;
     }
@@ -200,8 +208,8 @@ public class JdeItemTools {
             - Before calling this tool you need:
                 • entityId: the customer's AB Number. If you only have a name, resolve it first
                   with jde_lookup_customer_by_name.
-                • itemId: the item's JDE id. If you only have a description, resolve it first with
-                  jde_search_items.
+                • itemId and/or itemCatalog: the item's JDE identifiers. If you only have a
+                  description, resolve it first with jde_search_items.
                 • currencyCode: the customer's currency. If unknown, resolve it with
                   jde_get_customer_detail (field invoice.currencyCode / currencyCodeTransaction).
 
@@ -210,7 +218,10 @@ public class JdeItemTools {
             - businessUnit: JDE business unit / warehouse code, e.g. "10". Required — always ask
               the user which warehouse if not provided. Sent to JDE exactly as given, with no
               reformatting.
-            - itemId: JDE item id, e.g. 60011. Required.
+            - itemId: JDE item id, from jde_search_items, e.g. 60011.
+            - itemCatalog: JDE item catalog number/code (alternative identifier for the same item),
+              e.g. '210'.
+              At least ONE of itemId / itemCatalog is required; if both are known, send both.
             - currencyCode: customer's currency code, e.g. "USD". Required.
             - quantity: quantity requested, e.g. 2. Required.
             - unitOfMeasure: unit of measure code, e.g. "EA". Optional — if not provided, a server
@@ -228,8 +239,8 @@ public class JdeItemTools {
             - status "FAILED": message explains the error; retrying is safe.
 
             IMPORTANT FOR THE ASSISTANT:
-            - Never invent entityId, itemId, businessUnit or currencyCode. Resolve them via the
-              other tools first and confirm with the user if ambiguous.
+            - Never invent entityId, itemId, itemCatalog, businessUnit or currencyCode. Resolve them
+              via the other tools first and confirm with the user if ambiguous.
             - If the user did not say whether they want availability, ask them (Y/N) before
               calling this tool, unless the context makes it obvious.
             - Always state the currency alongside any price shown.
@@ -241,8 +252,18 @@ public class JdeItemTools {
             Integer entityId,
             @McpToolParam(description = "JDE business unit / warehouse code, e.g. '10'. Sent to JDE exactly as given.")
             String businessUnit,
-            @McpToolParam(description = "JDE item id, from jde_search_items, e.g. 60011.")
+            @McpToolParam(
+                    description = "JDE item id, from jde_search_items, e.g. 60011. "
+                            + "At least one of itemId / itemCatalog is required.",
+                    required = false
+            )
             Integer itemId,
+            @McpToolParam(
+                    description = "JDE item catalog number/code, e.g. '210' -- alternative identifier for "
+                            + "the same item. At least one of itemId / itemCatalog is required.",
+                    required = false
+            )
+            String itemCatalog,
             @McpToolParam(description = "Customer currency code, e.g. 'USD'.")
             String currencyCode,
             @McpToolParam(description = "Quantity requested, e.g. 2.")
@@ -260,6 +281,8 @@ public class JdeItemTools {
         int safeEntityId = entityId != null ? entityId : 0;
         String safeBusinessUnit = businessUnit != null ? businessUnit : "";
         String safeCurrencyCode = currencyCode != null ? currencyCode : "";
+        boolean hasItemId = itemId != null && itemId > 0;
+        boolean hasItemCatalog = itemCatalog != null && !itemCatalog.isBlank();
 
         if (entityId == null || entityId <= 0) {
             return new ItemPriceResult(ToolStatus.INVALID_REQUEST,
@@ -272,10 +295,11 @@ public class JdeItemTools {
                     "Please provide the business unit / warehouse code to price this item against.",
                     safeItemId, safeEntityId, safeBusinessUnit, safeCurrencyCode, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
         }
-        if (itemId == null || itemId <= 0) {
+        if (!hasItemId && !hasItemCatalog) {
             return new ItemPriceResult(ToolStatus.INVALID_REQUEST,
-                    "Please provide a valid item id (positive integer). "
-                            + "If you only have the item description, look it up first with jde_search_items.",
+                    "Please provide at least one item identifier: a valid item id (positive integer) "
+                            + "or an item catalog code. If you only have the item description, look it "
+                            + "up first with jde_search_items.",
                     safeItemId, safeEntityId, safeBusinessUnit, safeCurrencyCode, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
         }
         if (currencyCode == null || currencyCode.isBlank()) {
@@ -294,28 +318,186 @@ public class JdeItemTools {
                 ? processingVersion : defaultProcessingVersion;
         boolean withAvailability = "Y".equalsIgnoreCase(returnAvailability);
 
-        log.info("Requesting item price for itemId {} / entityId {} / businessUnit '{}' (availability={})",
-                itemId, entityId, businessUnit, withAvailability);
+        log.info("Requesting item price for itemId {} / itemCatalog {} / entityId {} / businessUnit '{}' (availability={})",
+                itemId, itemCatalog, entityId, businessUnit, withAvailability);
 
         progressNotifications.send(exchange, meta, 0, null,
                 "Consultando precio en JDE, puede tardar unos segundos...");
 
         try {
             PriceQuote quote = withAvailability
-                    ? soClient.getItemPriceAndAvailability(itemId, businessUnit, entityId, currencyCode, quantity, uom, procVersion)
-                    : soClient.getCustomerItemPrice(itemId, businessUnit, entityId, currencyCode, quantity, uom, procVersion);
+                    ? soClient.getItemPriceAndAvailability(itemId, itemCatalog, businessUnit, entityId, currencyCode, quantity, uom, procVersion)
+                    : soClient.getCustomerItemPrice(itemId, itemCatalog, businessUnit, entityId, currencyCode, quantity, uom, procVersion);
 
-            return new ItemPriceResult(ToolStatus.OK, "", itemId, entityId, businessUnit, currencyCode,
+            return new ItemPriceResult(ToolStatus.OK, "", safeItemId, entityId, businessUnit, currencyCode,
                     quote.unitPrice(), quote.extendedPrice(), quote.availability());
 
         } catch (Exception e) {
-            log.error("Error retrieving price for itemId {} / entityId {}", itemId, entityId, e);
+            log.error("Error retrieving price for itemId {} / itemCatalog {} / entityId {}", itemId, itemCatalog, entityId, e);
 
             return new ItemPriceResult(ToolStatus.FAILED,
-                    "An error occurred while retrieving the price for item " + itemId + " / customer "
-                            + entityId + ". Technical details have been logged in the MCP server. "
+                    "An error occurred while retrieving the price for item " + itemDescriptor(itemId, itemCatalog)
+                            + " / customer " + entityId + ". Technical details have been logged in the MCP server. "
                             + "Ask the user to try again later or contact support.",
-                    itemId, entityId, businessUnit, currencyCode, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
+                    safeItemId, entityId, businessUnit, currencyCode, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
         }
+    }
+
+    // =========================================================================
+    // Tool 5: Precio de lista de un artículo (sin cliente)
+    // =========================================================================
+    @McpTool(
+            name = "jde_get_item_list_price",
+            description = """
+            Get the JDE list (base) price of an item -- the standard catalog price, NOT tied to any
+            specific customer.
+
+            PURPOSE:
+            - Returns the list price(s) of an item, optionally filtered by warehouse, currency and
+              unit of measure. Does not require or accept a customer.
+            - If the user needs a CUSTOMER-SPECIFIC price (or stock availability), use
+              jde_get_item_price instead -- that one needs an entityId, this one does not.
+
+            WHEN TO USE:
+            - The user asks for an item's base/list price without mentioning a specific customer.
+            - If only the item name is known (no itemId/itemCatalog), call jde_search_items FIRST to
+              resolve it. If that search returns several matches, do NOT assume the first one -- ask
+              the user which one they mean.
+            - If the user's request actually needs a customer-specific price, and you already have
+              both an itemId and an entityId, use jde_get_item_price instead of this tool.
+
+            INPUT:
+            - itemId: JDE item id, from jde_search_items, e.g. 60011.
+            - itemCatalog: JDE item catalog number/code (alternative identifier for the same item),
+              e.g. '210'.
+              At least ONE of itemId / itemCatalog is required; if both are known, send both.
+            - Prefer using itemId whenever possible for better performance.
+            - businessUnit: JDE business unit / warehouse code, e.g. '10'. Optional -- if omitted,
+              the response includes one price PER warehouse instead of a single one.
+            - currencyCode: currency to express the price in, e.g. 'USD'. Optional.
+            - unitOfMeasureCode: unit of measure code, e.g. 'EA'. Optional.
+            - Never invent businessUnit, currencyCode, itemId, itemCatalog or unitOfMeasureCode --
+              only use values the user provided or that another tool returned; leave optional ones
+              out if unknown.
+
+            OUTPUT (structured JSON, see outputSchema):
+            - status "IN_PROGRESS": the query is still running against a busy JDE environment. This
+              is NOT an error -- call jde_get_item_list_price again with the exact same arguments
+              after pollAfterSeconds to get the actual results. Never report this to the user as a
+              failure.
+            - status "OK": prices[] has one entry per warehouse (just one if businessUnit was given),
+              each with businessUnit, itemId, itemCatalog, itemDescription, priceList, currencyCode,
+              unitOfMeasureCode, dateEffective, dateExpiration.
+            - status "FAILED" / "CANCELLED": message explains what happened; retrying is safe.
+            - status "INVALID_REQUEST": neither itemId nor itemCatalog was provided.
+
+            IMPORTANT FOR THE ASSISTANT:
+            - Present prices[] as a Markdown table (one row per warehouse when businessUnit wasn't
+              given), always stating the currency alongside any price shown.
+            """,
+            generateOutputSchema = true
+    )
+    public ItemListPriceResult getItemListPrice(
+            @McpToolParam(
+                    description = "JDE item id, from jde_search_items, e.g. 60011. "
+                            + "At least one of itemId / itemCatalog is required.",
+                    required = false
+            )
+            Integer itemId,
+            @McpToolParam(
+                    description = "JDE item catalog number/code, e.g. '210' -- alternative identifier for "
+                            + "the same item. At least one of itemId / itemCatalog is required.",
+                    required = false
+            )
+            String itemCatalog,
+            @McpToolParam(
+                    description = "JDE business unit / warehouse code, e.g. '10'. Optional -- if omitted, "
+                            + "returns one price per warehouse instead of a single one.",
+                    required = false
+            )
+            String businessUnit,
+            @McpToolParam(description = "Currency to express the price in, e.g. 'USD'. Optional.", required = false)
+            String currencyCode,
+            @McpToolParam(description = "Unit of measure code, e.g. 'EA'. Optional.", required = false)
+            String unitOfMeasureCode,
+            McpMeta meta,
+            McpSyncServerExchange exchange
+    ) {
+        boolean hasItemId = itemId != null && itemId > 0;
+        boolean hasItemCatalog = itemCatalog != null && !itemCatalog.isBlank();
+        if (!hasItemId && !hasItemCatalog) {
+            return new ItemListPriceResult(ToolStatus.INVALID_REQUEST,
+                    "Please provide at least one item identifier: a valid item id (positive integer) "
+                            + "or an item catalog code. If you only have the item description, look it "
+                            + "up first with jde_search_items.",
+                    0, List.of());
+        }
+
+        log.info("Requesting item list price for itemId {} / itemCatalog {} (businessUnit={})",
+                itemId, itemCatalog, businessUnit);
+
+        if (!asyncItemListPriceEnabled) {
+            progressNotifications.send(exchange, meta, 0, null,
+                    "Consultando precio de lista en JDE, puede tardar unos segundos...");
+            try {
+                List<ItemListPriceEntry> prices =
+                        soClient.getItemListPrice(itemId, itemCatalog, businessUnit, currencyCode, unitOfMeasureCode);
+                return new ItemListPriceResult(ToolStatus.OK, "", 0, prices);
+            } catch (Exception e) {
+                log.error("Error retrieving list price for itemId {} / itemCatalog {}", itemId, itemCatalog, e);
+                return new ItemListPriceResult(ToolStatus.FAILED,
+                        "An error occurred while retrieving the list price for item " + itemDescriptor(itemId, itemCatalog) + ". "
+                                + "Technical details have been logged in the MCP server. "
+                                + "Ask the user to try again later or contact support.",
+                        0, List.of());
+            }
+        }
+
+        String token = soClient.resolveSessionToken();
+        String key = "item-list-price|" + itemId + "|" + itemCatalog + "|" + businessUnit + "|" + currencyCode + "|" + unitOfMeasureCode;
+
+        LongRunningTask task = taskRegistry.getOrStart(
+                key,
+                Duration.ofMinutes(gatewayTimeoutMinutes + 1),
+                defaultPollIntervalMs,
+                Duration.ofSeconds(itemListPriceInitialWaitSeconds),
+                () -> soClient.getItemListPriceWithToken(itemId, itemCatalog, businessUnit, currencyCode, unitOfMeasureCode, token));
+
+        return switch (task.status()) {
+            case WORKING, INPUT_REQUIRED -> new ItemListPriceResult(
+                    ToolStatus.IN_PROGRESS,
+                    "The list price query for item " + itemDescriptor(itemId, itemCatalog) + " is still in "
+                            + "progress (this can take a while against a busy JDE environment). Call "
+                            + "jde_get_item_list_price again with the exact same arguments after "
+                            + "pollAfterSeconds to get the results -- this is not an error.",
+                    (int) ((task.pollIntervalMs() != null ? task.pollIntervalMs() : defaultPollIntervalMs) / 1000),
+                    List.of());
+            case COMPLETED -> {
+                @SuppressWarnings("unchecked")
+                List<ItemListPriceEntry> prices = (List<ItemListPriceEntry>) task.result();
+                yield new ItemListPriceResult(ToolStatus.OK, "", 0, prices);
+            }
+            case FAILED -> {
+                log.error("Error retrieving list price for itemId {} / itemCatalog {}: {}",
+                        itemId, itemCatalog, task.error());
+                yield new ItemListPriceResult(ToolStatus.FAILED,
+                        "An error occurred while retrieving the list price for item " + itemDescriptor(itemId, itemCatalog) + ". "
+                                + "Technical details have been logged in the MCP server. "
+                                + "Ask the user to try again later or contact support.",
+                        0, List.of());
+            }
+            case CANCELLED -> new ItemListPriceResult(ToolStatus.CANCELLED,
+                    "The query was cancelled. Call jde_get_item_list_price again to retry.", 0, List.of());
+        };
+    }
+
+    private static String itemDescriptor(Integer itemId, String itemCatalog) {
+        if (itemId != null && itemCatalog != null && !itemCatalog.isBlank()) {
+            return itemId + " (catalog " + itemCatalog + ")";
+        }
+        if (itemId != null) {
+            return String.valueOf(itemId);
+        }
+        return "catalog " + itemCatalog;
     }
 }

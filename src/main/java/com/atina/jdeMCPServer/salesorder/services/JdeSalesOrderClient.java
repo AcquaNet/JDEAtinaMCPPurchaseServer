@@ -7,6 +7,7 @@ import com.atina.jdeMCPServer.salesorder.model.CustomerCreditInfo;
 import com.atina.jdeMCPServer.salesorder.model.CustomerCreditSummary;
 import com.atina.jdeMCPServer.salesorder.model.CustomerDetail;
 import com.atina.jdeMCPServer.salesorder.model.CustomerSummary;
+import com.atina.jdeMCPServer.salesorder.model.ItemListPriceEntry;
 import com.atina.jdeMCPServer.salesorder.model.ItemSummary;
 import com.atina.jdeMCPServer.salesorder.model.PriceQuote;
 import com.atina.jdeMCPServer.salesorder.model.WarehouseAvailability;
@@ -48,6 +49,13 @@ public class JdeSalesOrderClient {
             "oracle.e1.bssv.JP420000.SalesOrderManager.getCustomerItemPrice";
     private static final String OP_GET_CUSTOMER_CREDIT_INFO =
             "oracle.e1.bssv.JP010020.CustomerManager.getCustomerCreditInformationV2";
+    private static final String OP_GET_ITEM_LIST_PRICE =
+            "oracle.e1.bssv.JP420000.SalesOrderManager.getItemListPrice";
+
+    // businessUnit va con padding de espacios a la izquierda hasta 12 caracteres --
+    // mismo requisito que confirmado en JdePurchaseOrderClient para otras operaciones
+    // BSSV; sin este padding getItemListPrice no matchea el almacen.
+    private static final int BUSINESS_UNIT_FIELD_WIDTH = 12;
 
     // Mismo default (10) que usa JdePurchaseOrderClient.limitAndFormatPendingOrders para
     // ordenes de compra pendientes -- aplicado aca a busquedas de items/clientes por el
@@ -267,16 +275,18 @@ public class JdeSalesOrderClient {
 
     /**
      * Precio y disponibilidad por almacén de un artículo para un cliente
-     * (operación BSSV getItemPriceAndAvailabilityV3).
+     * (operación BSSV getItemPriceAndAvailabilityV3). El item se identifica
+     * por itemId y/o itemCatalog -- al menos uno de los dos debe venir
+     * informado (lo valida la tool antes de llamar acá).
      */
-    public PriceQuote getItemPriceAndAvailability(int itemId, String businessUnit, int entityId,
+    public PriceQuote getItemPriceAndAvailability(Integer itemId, String itemCatalog, String businessUnit, int entityId,
                                                    String currencyCode, Number quantity,
                                                    String unitOfMeasure, String processingVersion) {
 
-        log.info("Gateway item price+availability for itemId {} / entityId {}", itemId, entityId);
+        log.info("Gateway item price+availability for itemId {} / itemCatalog {} / entityId {}",
+                itemId, itemCatalog, entityId);
 
-        Map<String, Object> item = new LinkedHashMap<>();
-        item.put("itemId", itemId);
+        Map<String, Object> item = buildItemMap(itemId, itemCatalog);
 
         Map<String, Object> product = new LinkedHashMap<>();
         product.put("item", item);
@@ -320,16 +330,18 @@ public class JdeSalesOrderClient {
 
     /**
      * Precio de un artículo para un cliente, sin disponibilidad (operación
-     * BSSV getCustomerItemPrice).
+     * BSSV getCustomerItemPrice). El item se identifica por itemId y/o
+     * itemCatalog -- al menos uno de los dos debe venir informado (lo valida
+     * la tool antes de llamar acá).
      */
-    public PriceQuote getCustomerItemPrice(int itemId, String businessUnit, int entityId,
+    public PriceQuote getCustomerItemPrice(Integer itemId, String itemCatalog, String businessUnit, int entityId,
                                             String currencyCode, Number quantity,
                                             String unitOfMeasure, String processingVersion) {
 
-        log.info("Gateway customer item price for itemId {} / entityId {}", itemId, entityId);
+        log.info("Gateway customer item price for itemId {} / itemCatalog {} / entityId {}",
+                itemId, itemCatalog, entityId);
 
-        Map<String, Object> item = new LinkedHashMap<>();
-        item.put("itemId", itemId);
+        Map<String, Object> item = buildItemMap(itemId, itemCatalog);
 
         Map<String, Object> product = new LinkedHashMap<>();
         product.put("item", item);
@@ -360,6 +372,106 @@ public class JdeSalesOrderClient {
                 listaDeValores.path("priceUnitDomestic").decimalValue(),
                 listaDeValores.path("priceExtendedDomestic").decimalValue(),
                 List.of());
+    }
+
+    /**
+     * Precio de lista de un artículo (operación BSSV getItemListPrice) --
+     * a diferencia de {@link #getItemPriceAndAvailability} / {@link #getCustomerItemPrice},
+     * no requiere cliente (entityId). Si no se informa businessUnit, la
+     * respuesta trae un precio por cada almacén. El item se identifica por
+     * itemId y/o itemCatalog -- al menos uno de los dos debe venir informado
+     * (lo valida la tool antes de llamar acá), y si ambos vienen se mandan
+     * los dos, como en el ejemplo de la operación BSSV.
+     */
+    public List<ItemListPriceEntry> getItemListPrice(Integer itemId, String itemCatalog, String businessUnit,
+                                                       String currencyCode, String unitOfMeasureCode) {
+        log.info("Gateway item list price for itemId {} / itemCatalog {} (businessUnit={})",
+                itemId, itemCatalog, businessUnit);
+        String raw = executeGatewayOperation(OP_GET_ITEM_LIST_PRICE,
+                itemListPriceValue(itemId, itemCatalog, businessUnit, currencyCode, unitOfMeasureCode));
+        return parseItemListPrice(raw);
+    }
+
+    /**
+     * Igual que {@link #getItemListPrice} pero con un token ya resuelto (no lo
+     * resuelve internamente vía authService, que depende de
+     * RequestContextHolder -- ver {@link #executeGatewayOperationWithToken}).
+     */
+    public List<ItemListPriceEntry> getItemListPriceWithToken(Integer itemId, String itemCatalog, String businessUnit,
+                                                                String currencyCode, String unitOfMeasureCode,
+                                                                String token) {
+        String raw = executeGatewayOperationWithToken(OP_GET_ITEM_LIST_PRICE,
+                itemListPriceValue(itemId, itemCatalog, businessUnit, currencyCode, unitOfMeasureCode), token);
+        return parseItemListPrice(raw);
+    }
+
+    /**
+     * Objeto "item" común a las tres operaciones de precio (getItemListPrice,
+     * getItemPriceAndAvailabilityV3, getCustomerItemPrice): identifica el
+     * artículo por itemId y/o itemCatalog, incluyendo solo las claves
+     * informadas (si vienen los dos, se mandan los dos).
+     */
+    private static Map<String, Object> buildItemMap(Integer itemId, String itemCatalog) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        if (itemId != null) {
+            item.put("itemId", itemId);
+        }
+        if (itemCatalog != null && !itemCatalog.isBlank()) {
+            item.put("itemCatalog", itemCatalog);
+        }
+        return item;
+    }
+
+    private static Map<String, Object> itemListPriceValue(Integer itemId, String itemCatalog, String businessUnit,
+                                                            String currencyCode, String unitOfMeasureCode) {
+        Map<String, Object> item = buildItemMap(itemId, itemCatalog);
+
+        Map<String, Object> value = new LinkedHashMap<>();
+        // businessUnit/currencyCode/unitOfMeasureCode se omiten del payload si no se
+        // informan -- omitir businessUnit es lo que hace que la operación devuelva un
+        // precio por cada almacén en vez de uno solo.
+        if (businessUnit != null && !businessUnit.isBlank()) {
+            value.put("businessUnit", padBusinessUnit(businessUnit));
+        }
+        if (currencyCode != null && !currencyCode.isBlank()) {
+            value.put("currencyCode", currencyCode);
+        }
+        value.put("item", item);
+        if (unitOfMeasureCode != null && !unitOfMeasureCode.isBlank()) {
+            value.put("unitOfMeasureCode", unitOfMeasureCode);
+        }
+        return value;
+    }
+
+    private List<ItemListPriceEntry> parseItemListPrice(String rawJson) {
+        JsonNode listaDeValores = parseListaDeValores(rawJson, OP_GET_ITEM_LIST_PRICE);
+        JsonNode results = listaDeValores.path("showItemListPrice");
+
+        List<ItemListPriceEntry> prices = new ArrayList<>();
+        if (results.isArray()) {
+            for (JsonNode entry : results) {
+                JsonNode item = entry.path("item");
+                prices.add(new ItemListPriceEntry(
+                        entry.path("businessUnit").asText("").trim(),
+                        item.path("itemId").asInt(),
+                        item.path("itemCatalog").asText("").trim(),
+                        item.path("itemDescription").asText("").trim(),
+                        entry.path("priceList").decimalValue(),
+                        entry.path("currencyCode").asText("").trim(),
+                        entry.path("unitOfMeasureCode").asText("").trim(),
+                        entry.path("dateEffective").asText(""),
+                        entry.path("dateExpiration").asText("")));
+            }
+        }
+        return prices;
+    }
+
+    private static String padBusinessUnit(String value) {
+        String trimmed = value.trim();
+        if (trimmed.length() >= BUSINESS_UNIT_FIELD_WIDTH) {
+            return trimmed;
+        }
+        return " ".repeat(BUSINESS_UNIT_FIELD_WIDTH - trimmed.length()) + trimmed;
     }
 
     /**
