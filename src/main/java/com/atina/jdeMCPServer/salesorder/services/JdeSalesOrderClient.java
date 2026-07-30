@@ -106,15 +106,31 @@ public class JdeSalesOrderClient {
      * customerNumberGLN, entityLongId, etc.) no se expone.
      */
     public CustomerCreditSummary getCustomerCreditInfo(int entityId) {
-        log.info("Gateway customer credit info for entityId {}", entityId);
+        String raw = executeGatewayOperation(OP_GET_CUSTOMER_CREDIT_INFO, customerCreditInfoValue(entityId));
+        return parseCustomerCreditSummary(raw);
+    }
 
+    /**
+     * Igual que {@link #getCustomerCreditInfo} pero con un token ya resuelto
+     * (no lo resuelve internamente vía authService, que depende de
+     * RequestContextHolder -- ver {@link #executeGatewayOperationWithToken}).
+     */
+    public CustomerCreditSummary getCustomerCreditInfoWithToken(int entityId, String token) {
+        String raw = executeGatewayOperationWithToken(OP_GET_CUSTOMER_CREDIT_INFO, customerCreditInfoValue(entityId), token);
+        return parseCustomerCreditSummary(raw);
+    }
+
+    private static Map<String, Object> customerCreditInfoValue(int entityId) {
+        log.info("Gateway customer credit info for entityId {}", entityId);
         Map<String, Object> entity = new LinkedHashMap<>();
         entity.put("entityId", entityId);
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("entity", entity);
+        return value;
+    }
 
-        String raw = executeGatewayOperation(OP_GET_CUSTOMER_CREDIT_INFO, value);
-        JsonNode result = parseListaDeValores(raw, OP_GET_CUSTOMER_CREDIT_INFO);
+    private CustomerCreditSummary parseCustomerCreditSummary(String rawJson) {
+        JsonNode result = parseListaDeValores(rawJson, OP_GET_CUSTOMER_CREDIT_INFO);
 
         return new CustomerCreditSummary(
                 result.path("amountCreditLimit").decimalValue(),
