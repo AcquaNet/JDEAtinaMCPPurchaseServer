@@ -1,8 +1,5 @@
 package com.atina.jdeMCPServer.auth;
 
-import com.atina.jdeMCPServer.identity.IdentityResolver;
-import com.atina.jdeMCPServer.identity.JdeIdentity;
-import com.atina.jdeMCPServer.identity.UnmappedIdentityException;
 import com.atina.jdeMCPServer.security.AuthenticatedJdeIdentity;
 import com.atina.jdeMCPServer.vault.AtinaSessionVault;
 import com.atina.jdeMCPServer.vault.VaultUnavailableException;
@@ -25,9 +22,6 @@ public class JdeAuthService {
 
     private static final Logger log = LoggerFactory.getLogger(JdeAuthService.class);
 
-    /** Atributo de request: usuario JDE resuelto por el Identity Bridge en esta request. */
-    private static final String BRIDGE_USER_ATTR = "jde.bridge.user";
-
     /**
      * Atributo de request: marca que el token de esta request salió de la
      * estrategia de Atina (claim o vault). updateTokenFromResponse lo usa para
@@ -38,8 +32,6 @@ public class JdeAuthService {
 
     private final JdeTokenStore tokenStore;
     private final AuthenticatedJdeIdentity authenticatedIdentity;
-    private final IdentityResolver identityResolver;
-    private final JdeSessionCache sessionCache;
     private final AtinaSessionVault atinaSessionVault;
     private final AtinaSessionSource atinaSessionSource;
     private final ObjectMapper objectMapper;
@@ -47,16 +39,12 @@ public class JdeAuthService {
 
     public JdeAuthService(JdeTokenStore tokenStore,
                           AuthenticatedJdeIdentity authenticatedIdentity,
-                          IdentityResolver identityResolver,
-                          JdeSessionCache sessionCache,
                           AtinaSessionVault atinaSessionVault,
                           ObjectMapper objectMapper,
                           @Value("${jde.atina.session-source:claim}") String atinaSessionSource,
                           @Value("${jde.atina.address-book-claim:addressBookNumber}") String addressBookClaim) {
         this.tokenStore = tokenStore;
         this.authenticatedIdentity = authenticatedIdentity;
-        this.identityResolver = identityResolver;
-        this.sessionCache = sessionCache;
         this.atinaSessionVault = atinaSessionVault;
         this.objectMapper = objectMapper;
         this.atinaSessionSource = AtinaSessionSource.parse(atinaSessionSource);
@@ -71,12 +59,9 @@ public class JdeAuthService {
     /**
      * Devuelve el token JDE para la request actual.
      * Orden de resolución:
-     *   1. Token de un jde_login manual para este Mcp-Session-Id (el login
-     *      explícito gana sobre el bridge).
-     *   2. Identity Bridge: sub de Keycloak -> identity_mapping -> credencial
-     *      del vault -> login automático contra JDE (con cache por jde_user).
-     * Si el sub no tiene mapeo y tampoco hubo login manual, lanza excepción
-     * con mensaje claro para Claude.
+     *   1. Token de un jde_login manual para este Mcp-Session-Id.
+     * Si ninguna fuente resuelve un token, lanza excepción con mensaje claro
+     * para Claude.
      *
      * Nota: el header Authorization NO se usa como fuente del token JDE:
      * transporta el JWT de Keycloak, validado por Spring Security.
@@ -94,7 +79,7 @@ public class JdeAuthService {
         // 0.b Token de sesión JDE de Atina para un usuario autenticado con Keycloak.
         //     Puede venir del claim "atina_token" del JWT (etapa 1) o de OpenBao
         //     (etapa 2); jde.atina.session-source define cuál se usa y en qué orden.
-        //     Se usa directo como X-Approver-Token, sin Identity Bridge ni login.
+        //     Se usa directo como X-Approver-Token.
         var atinaSession = resolveAtinaSessionToken();
         if (atinaSession.isPresent()) {
             currentRequestAttributes().setAttribute(
@@ -108,28 +93,9 @@ public class JdeAuthService {
             return manualToken.get();
         }
 
-        // 2. Identity Bridge: identidad Keycloak -> sesión JDE automática
-        try {
-            String sub = authenticatedIdentity.currentSubject();
-            JdeIdentity identity = identityResolver.resolve(sub);
-            String token = sessionCache.getOrLogin(identity);
-            // Recordar el usuario del bridge para que updateTokenFromResponse
-            // sepa a qué cache refrescar si Mulesoft renueva el token
-            currentRequestAttributes().setAttribute(
-                    BRIDGE_USER_ATTR, identity.jdeUser().toUpperCase(), RequestAttributes.SCOPE_REQUEST);
-            return token;
-        } catch (UnmappedIdentityException e) {
-            log.info("Identity Bridge sin mapeo: {}", e.getMessage());
-            throw new JdeSessionNotFoundException(
-                    "Tu usuario no tiene un usuario JDE asociado todavía (falta el alta en identity_mapping). " +
-                            "Pedí el alta del mapeo, o autentícate manualmente con el tool 'jde_login' " +
-                            "usando tu usuario y contraseña JDE.");
-        } catch (IllegalStateException e) {
-            // Sin JWT Keycloak en el contexto (p. ej. flujo fuera de una request MCP)
-            throw new JdeSessionNotFoundException(
-                    "Sesión JDE no encontrada para esta sesión. " +
-                            "Por favor autentícate usando el tool 'jde_login' con tu usuario y contraseña JDE.");
-        }
+        throw new JdeSessionNotFoundException(
+                "Sesión JDE no encontrada para esta sesión. " +
+                        "Por favor autentícate usando el tool 'jde_login' con tu usuario y contraseña JDE.");
     }
 
     /**
@@ -242,9 +208,8 @@ public class JdeAuthService {
     }
 
     /**
-     * Actualiza el token cuando Mulesoft devuelve uno renovado en headers.
-     * Si el token de esta request salió del Identity Bridge, se refresca el
-     * cache por jde_user; si salió de un jde_login manual, el store por sesión.
+     * Actualiza el token cuando el backend devuelve uno renovado en headers,
+     * para la sesión de un jde_login manual (el store por sesión).
      */
     public void updateTokenFromResponse(org.springframework.http.HttpHeaders headers) {
         String newToken = headers.getFirst("X-Approver-Token");
@@ -262,13 +227,7 @@ public class JdeAuthService {
         if (Boolean.TRUE.equals(atinaStrategy)) {
             return;
         }
-        Object bridgeUser = currentRequestAttributes().getAttribute(
-                BRIDGE_USER_ATTR, RequestAttributes.SCOPE_REQUEST);
-        if (bridgeUser != null) {
-            sessionCache.refresh((String) bridgeUser, newToken);
-        } else {
-            storeToken(newToken);
-        }
+        storeToken(newToken);
     }
 
     // ---------------------------------------------------------------

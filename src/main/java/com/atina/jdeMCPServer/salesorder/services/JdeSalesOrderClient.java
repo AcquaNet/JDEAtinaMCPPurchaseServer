@@ -4,6 +4,7 @@ import com.atina.jdeMCPServer.auth.JdeAuthService;
 import com.atina.jdeMCPServer.gateway.RequestCoalescer;
 import com.atina.jdeMCPServer.salesorder.model.CustomerAddress;
 import com.atina.jdeMCPServer.salesorder.model.CustomerCreditInfo;
+import com.atina.jdeMCPServer.salesorder.model.CustomerCreditSummary;
 import com.atina.jdeMCPServer.salesorder.model.CustomerDetail;
 import com.atina.jdeMCPServer.salesorder.model.CustomerSummary;
 import com.atina.jdeMCPServer.salesorder.model.ItemSummary;
@@ -45,6 +46,8 @@ public class JdeSalesOrderClient {
             "oracle.e1.bssv.JP420000.SalesOrderManager.getItemPriceAndAvailabilityV3";
     private static final String OP_GET_CUSTOMER_ITEM_PRICE =
             "oracle.e1.bssv.JP420000.SalesOrderManager.getCustomerItemPrice";
+    private static final String OP_GET_CUSTOMER_CREDIT_INFO =
+            "oracle.e1.bssv.JP010020.CustomerManager.getCustomerCreditInformationV2";
 
     // Mismo default (10) que usa JdePurchaseOrderClient.limitAndFormatPendingOrders para
     // ordenes de compra pendientes -- aplicado aca a busquedas de items/clientes por el
@@ -63,12 +66,10 @@ public class JdeSalesOrderClient {
         return items.size() > effectiveLimit ? items.subList(0, effectiveLimit) : items;
     }
 
-    private final WebClient webClient;
     private final WebClient gatewayWebClient;
     private final JdeAuthService authService;
     private final ObjectMapper objectMapper;
     private final RequestCoalescer requestCoalescer;
-    private final String baseUrl;
     private final String gatewayBaseUrl;
     private final String gatewayTransactionId;
 
@@ -76,53 +77,42 @@ public class JdeSalesOrderClient {
             JdeAuthService authService,
             ObjectMapper objectMapper,
             RequestCoalescer requestCoalescer,
-            @Value("${jde.so.api.base-url}") String baseUrl,
             @Value("${jde.atina.gateway.base-url}") String gatewayBaseUrl,
             @Value("${jde.atina.gateway.timeout-minutes:10}") int gatewayTimeoutMinutes,
             @Value("${jde.atina.gateway.transaction-id:0}") String gatewayTransactionId) {
 
-        this.webClient = WebClient.builder().clientConnector(new ReactorClientHttpConnector(
-                HttpClient.create().responseTimeout(Duration.ofMinutes(10))
-        )).build();
         this.gatewayWebClient = WebClient.builder().clientConnector(new ReactorClientHttpConnector(
                 HttpClient.create().responseTimeout(Duration.ofMinutes(gatewayTimeoutMinutes))
         )).build();
         this.authService = authService;
         this.objectMapper = objectMapper;
         this.requestCoalescer = requestCoalescer;
-        this.baseUrl = baseUrl;
         this.gatewayBaseUrl = gatewayBaseUrl;
         this.gatewayTransactionId = gatewayTransactionId;
     }
 
-    // Coalescea llamadas identicas concurrentes (mismo customerNumber): si un cliente
-    // MCP cancela por timeout y reintenta la misma tool call mientras la anterior
-    // sigue esperando a Mulesoft, el reintento espera el resultado en curso en vez
-    // de disparar una llamada nueva.
-    public String getCustomerCreditFinancialInfo(int customerNumber) {
-        return requestCoalescer.execute(
-                "getCustomerCreditFinancialInfo|" + customerNumber,
-                () -> doGetCustomerCreditFinancialInfo(customerNumber));
-    }
+    /**
+     * Crédito y exposición financiera de un cliente (operación BSSV
+     * getCustomerCreditInformationV2). Devuelve solo los campos que consume
+     * jde_get_customer_credit_info -- el resto de la respuesta (e1MessageList,
+     * customerNumberGLN, entityLongId, etc.) no se expone.
+     */
+    public CustomerCreditSummary getCustomerCreditInfo(int entityId) {
+        log.info("Gateway customer credit info for entityId {}", entityId);
 
-    private String doGetCustomerCreditFinancialInfo(int customerNumber) {
+        Map<String, Object> entity = new LinkedHashMap<>();
+        entity.put("entityId", entityId);
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("entity", entity);
 
-        String token = authService.getOrCreateToken();
+        String raw = executeGatewayOperation(OP_GET_CUSTOMER_CREDIT_INFO, value);
+        JsonNode result = parseListaDeValores(raw, OP_GET_CUSTOMER_CREDIT_INFO);
 
-        log.info("Requesting credit/financial info for customer {}", customerNumber);
-
-        ResponseEntity<String> response = webClient.get()
-                .uri(baseUrl + "/v1/getCustomerCreditFinancialInfo?customerNumber={customerNumber}", customerNumber)
-                .header("X-Approver-Token", token)
-                .retrieve()
-                .toEntity(String.class)
-                .block();
-
-        authService.updateTokenFromResponse(response.getHeaders());
-
-        log.info("Credit/financial info for customer {} Done", customerNumber);
-
-        return response.getBody();
+        return new CustomerCreditSummary(
+                result.path("amountCreditLimit").decimalValue(),
+                result.path("amountTotalExposure").decimalValue(),
+                result.path("creditHoldExempt").asBoolean(),
+                result.path("entity").path("entityTaxId").asText("").trim());
     }
 
     // =====================================================================
