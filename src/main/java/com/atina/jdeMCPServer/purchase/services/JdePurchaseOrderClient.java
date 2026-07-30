@@ -2,11 +2,12 @@ package com.atina.jdeMCPServer.purchase.services;
 
 import com.atina.jdeMCPServer.auth.JdeAuthService;
 import com.atina.jdeMCPServer.gateway.RequestCoalescer;
+import com.atina.jdeMCPServer.purchase.model.PendingPurchaseOrderSummary;
+import com.atina.jdeMCPServer.purchase.model.PurchaseOrderDetail;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +23,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +49,11 @@ public class JdePurchaseOrderClient {
     private static final String FIXED_DOCUMENT_COMPANY = "000";
 
     private static final int BUSINESS_UNIT_FIELD_WIDTH = 12;
+
+    private static final TypeReference<Map<String, Object>> MAP_TYPE_REF = new TypeReference<>() {
+    };
+    private static final TypeReference<List<Map<String, Object>>> LIST_OF_MAP_TYPE_REF = new TypeReference<>() {
+    };
 
     private final WebClient gatewayWebClient;
     private final JdeAuthService authService;
@@ -94,12 +101,12 @@ public class JdePurchaseOrderClient {
     // =========================================================================
     // Tool 1: Listar ordenes pendientes de aprobacion
     // =========================================================================
-    public String getPendingPurchaseOrders(Integer limit, String orderTypeCode,
-                                            String businessUnitCode, String statusCodeNext) {
+    public List<PendingPurchaseOrderSummary> getPendingPurchaseOrders(String orderTypeCode,
+                                                                        String businessUnitCode,
+                                                                        String statusCodeNext) {
         long approverAddressNumber = authService.getApproverAddressBookNumber();
-        ArrayNode all = fetchAllPendingOrders(orderTypeCode, businessUnitCode, statusCodeNext,
+        return fetchAllPendingOrders(orderTypeCode, businessUnitCode, statusCodeNext,
                 approverAddressNumber, this::executeGatewayOperation);
-        return limitAndFormatPendingOrders(all, limit);
     }
 
     /**
@@ -118,13 +125,12 @@ public class JdePurchaseOrderClient {
 
     /**
      * Igual que {@link #getPendingPurchaseOrders} pero con un {@link ApproverContext}
-     * ya resuelto, y sin aplicar el recorte por `limit` (devuelve todos los
-     * resultados shapeados) -- pensado para consumidores que separan "traer los
-     * datos" de "aplicar el límite de presentación" (ej. un futuro mecanismo
-     * asíncrono). No la llama nadie todavía.
+     * ya resuelto -- usado por la rama asíncrona (LongRunningTaskRegistry), que
+     * cachea el resultado completo (sin recorte por `limit`) y aplica el recorte
+     * recién al servir la respuesta (ver JdePurchaseApprovalTool).
      */
-    public ArrayNode fetchAllPendingOrdersWithToken(String orderTypeCode, String businessUnitCode,
-                                                     String statusCodeNext, ApproverContext ctx) {
+    public List<PendingPurchaseOrderSummary> fetchAllPendingOrdersWithToken(String orderTypeCode, String businessUnitCode,
+                                                                             String statusCodeNext, ApproverContext ctx) {
         return fetchAllPendingOrders(orderTypeCode, businessUnitCode, statusCodeNext,
                 ctx.approverAddressNumber(),
                 (op, val) -> executeGatewayOperationWithToken(op, val, ctx.token()));
@@ -152,9 +158,10 @@ public class JdePurchaseOrderClient {
         return new EffectiveFilters(effectiveOrderType, effectiveBusinessUnit, effectiveStatusCodeNext);
     }
 
-    private ArrayNode fetchAllPendingOrders(String orderTypeCode, String businessUnitCode, String statusCodeNext,
-                                             long approverAddressNumber,
-                                             java.util.function.BiFunction<String, Map<String, Object>, JsonNode> operationExecutor) {
+    private List<PendingPurchaseOrderSummary> fetchAllPendingOrders(
+            String orderTypeCode, String businessUnitCode, String statusCodeNext,
+            long approverAddressNumber,
+            java.util.function.BiFunction<String, Map<String, Object>, JsonNode> operationExecutor) {
 
         EffectiveFilters filters = resolveEffectiveFilters(orderTypeCode, businessUnitCode, statusCodeNext);
         String effectiveOrderType = filters.orderType();
@@ -177,68 +184,47 @@ public class JdePurchaseOrderClient {
         JsonNode listaDeValores = operationExecutor.apply(OP_GET_PENDING_PURCHASE_ORDERS, value);
         JsonNode results = listaDeValores.path("purchaseOrdersForApproverResults");
 
-        ArrayNode legacyShaped = objectMapper.createArrayNode();
+        List<PendingPurchaseOrderSummary> summaries = new ArrayList<>();
         if (results.isArray()) {
             for (JsonNode item : results) {
                 pendingOrderStore.put(item);
-                legacyShaped.add(toLegacyShape(item));
+                summaries.add(toSummary(item));
             }
         }
-        return legacyShaped;
+        return summaries;
     }
 
-    /** Aplica el recorte por `limit` (default 10) y serializa -- mismo criterio que usaba getPendingPurchaseOrders. */
-    public String limitAndFormatPendingOrders(ArrayNode all, Integer limit) {
-        int effectiveLimit = (limit != null && limit > 0) ? limit : 10;
-        ArrayNode limited = objectMapper.createArrayNode();
-        for (int i = 0; i < all.size() && i < effectiveLimit; i++) {
-            limited.add(all.get(i));
-        }
-        return writeValueAsString(limited, "la lista de ordenes pendientes");
-    }
-
-    private ObjectNode toLegacyShape(JsonNode item) {
-        ObjectNode legacy = objectMapper.createObjectNode();
-        legacy.put("documentCompanyKeyOrderNo", item.path("documentCompanyKeyOrderNo").asText(""));
-        legacy.put("documentOrderTypeCode", item.path("documentOrderTypeCode").asText(""));
-        legacy.put("documentOrderInvoiceNumber", item.path("documentOrderInvoiceNumber").asLong());
-        legacy.put("documentSuffix", item.path("documentSuffix").asText(""));
-        legacy.put("statusApproval", item.path("statusApproval").asText(""));
-        legacy.put("approvalRoutingCodePurchaseOrder", item.path("approvalRoutingCodePurchaseOrder").asText(""));
-        legacy.put("entityNameOriginator", item.path("entityNameOriginator").asText(""));
-        legacy.put("entityNameSupplier", item.path("entityNameSupplier").asText(""));
-        legacy.put("entityNameShipTo", item.path("entityNameShipTo").asText(""));
-        legacy.put("currencyMode", item.path("currencyMode").asText(""));
-        legacy.put("amountGross", item.path("amountGross").decimalValue());
-        legacy.put("currencyCodeBase", item.path("currencyCodeBase").asText(""));
-        legacy.put("amountForeign", item.path("amountForeign").decimalValue());
-        legacy.put("currencyCodeForeign", item.path("currencyCodeForeign").asText(""));
-        legacy.put("businessUnitCode", item.path("businessUnitCode").asText("").trim());
-        legacy.put("dateRequested", truncateToDate(item.path("dateRequested").asText(null)));
-        legacy.put("dateTransaction", truncateToDate(item.path("dateTransaction").asText(null)));
-
+    private PendingPurchaseOrderSummary toSummary(JsonNode item) {
         boolean domestic = "D".equals(item.path("currencyMode").asText(""));
-        ObjectNode calc = legacy.putObject("calculateValues");
-        if (domestic) {
-            calc.put("amountToApprove", item.path("amountGross").decimalValue());
-            calc.put("currencyToApprove", item.path("currencyCodeBase").asText(""));
-        } else {
-            calc.put("amountToApprove", item.path("amountForeign").decimalValue());
-            calc.put("currencyToApprove", item.path("currencyCodeForeign").asText(""));
-        }
-        calc.put("daysOld", computeDaysOld(item.path("dateTransaction").asText(null)));
+        java.math.BigDecimal amountToApprove = domestic
+                ? item.path("amountGross").decimalValue()
+                : item.path("amountForeign").decimalValue();
+        String currencyToApprove = domestic
+                ? item.path("currencyCodeBase").asText("")
+                : item.path("currencyCodeForeign").asText("");
 
-        return legacy;
+        return new PendingPurchaseOrderSummary(
+                item.path("documentOrderTypeCode").asText(""),
+                item.path("documentOrderInvoiceNumber").asLong(),
+                item.path("documentCompanyKeyOrderNo").asText(""),
+                item.path("documentSuffix").asText(""),
+                item.path("entityNameSupplier").asText("").trim(),
+                item.path("entityNameShipTo").asText("").trim(),
+                amountToApprove,
+                currencyToApprove,
+                computeDaysOld(item.path("dateTransaction").asText(null)),
+                truncateToDate(item.path("dateRequested").asText(null)),
+                truncateToDate(item.path("dateTransaction").asText(null)));
     }
 
     // =========================================================================
     // Tool 2: Detalle de una orden (header + detail combinando dos operaciones)
     // =========================================================================
-    public String getPurchaseOrderDetail(String documentOrderTypeCode,
-                                          Integer documentOrderInvoiceNumber,
-                                          String documentCompanyKeyOrderNo,
-                                          String documentSuffix,
-                                          Consumer<String> onProgress) {
+    public PurchaseOrderDetail getPurchaseOrderDetail(String documentOrderTypeCode,
+                                                       Integer documentOrderInvoiceNumber,
+                                                       String documentCompanyKeyOrderNo,
+                                                       String documentSuffix,
+                                                       Consumer<String> onProgress) {
 
         Map<String, Object> purchaseOrderKey = new LinkedHashMap<>();
         purchaseOrderKey.put("documentTypeCode", documentOrderTypeCode);
@@ -266,11 +252,17 @@ public class JdePurchaseOrderClient {
         JsonNode detailLista = executeGatewayOperation(OP_GET_PURCHASE_ORDER_DETAIL, detailValue);
         JsonNode detailResults = detailLista.path("purchaseOrderDetailForApproverResults");
 
-        ObjectNode combined = objectMapper.createObjectNode();
-        combined.set("header", showPurchaseOrder);
-        combined.set("detail", detailResults);
+        // isMissingNode()/isNull() se chequean a mano -- convertValue sobre esos nodos
+        // puede devolver null, y esto va directo a un campo no-nullable de un record
+        // de salida MCP (ver PurchaseOrderDetail).
+        Map<String, Object> headerFields = (showPurchaseOrder.isMissingNode() || showPurchaseOrder.isNull())
+                ? Map.of()
+                : objectMapper.convertValue(showPurchaseOrder, MAP_TYPE_REF);
+        List<Map<String, Object>> lines = detailResults.isArray()
+                ? objectMapper.convertValue(detailResults, LIST_OF_MAP_TYPE_REF)
+                : List.of();
 
-        return writeValueAsString(combined, "el detalle de la orden de compra");
+        return new PurchaseOrderDetail(headerFields, lines);
     }
 
     private static void notifyProgress(Consumer<String> onProgress, String message) {
@@ -282,12 +274,12 @@ public class JdePurchaseOrderClient {
     // =========================================================================
     // Tool 3: Aprobar / rechazar una orden
     // =========================================================================
-    public String processPurchaseOrder(String action,
-                                        String documentOrderTypeCode,
-                                        Integer documentOrderInvoiceNumber,
-                                        String documentCompanyKeyOrderNo,
-                                        String documentSuffix,
-                                        String remark) {
+    public void processPurchaseOrder(String action,
+                                      String documentOrderTypeCode,
+                                      Integer documentOrderInvoiceNumber,
+                                      String documentCompanyKeyOrderNo,
+                                      String documentSuffix,
+                                      String remark) {
 
         String key = PendingPurchaseOrderStore.buildKey(
                 documentCompanyKeyOrderNo,
@@ -318,11 +310,9 @@ public class JdePurchaseOrderClient {
         value.put("detail", List.of());
         value.put("approvalRouteCode", cached.path("approvalRoutingCodePurchaseOrder").asText(""));
 
-        JsonNode result = executeGatewayOperation(OP_PROCESS_APPROVE_REJECT, value);
+        executeGatewayOperation(OP_PROCESS_APPROVE_REJECT, value);
 
         pendingOrderStore.remove(key);
-
-        return writeValueAsString(result, "la respuesta de aprobación/rechazo");
     }
 
     // =========================================================================
@@ -407,14 +397,6 @@ public class JdePurchaseOrderClient {
         }
     }
 
-    private String writeValueAsString(Object value, String description) {
-        try {
-            return objectMapper.writeValueAsString(value);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Error serializando " + description, e);
-        }
-    }
-
     private static String padBusinessUnit(String value) {
         String trimmed = value == null ? "" : value.trim();
         if (trimmed.length() >= BUSINESS_UNIT_FIELD_WIDTH) {
@@ -423,9 +405,11 @@ public class JdePurchaseOrderClient {
         return " ".repeat(BUSINESS_UNIT_FIELD_WIDTH - trimmed.length()) + trimmed;
     }
 
+    // Nunca null (aunque isoDateTime lo sea) -- va directo a un campo String de un
+    // record de salida MCP, y el SDK rechaza null en campos no declarados nullable.
     private static String truncateToDate(String isoDateTime) {
         if (isoDateTime == null) {
-            return null;
+            return "";
         }
         int idx = isoDateTime.indexOf('T');
         return idx > 0 ? isoDateTime.substring(0, idx) : isoDateTime;

@@ -3,9 +3,15 @@ package com.atina.jdeMCPServer.purchase.tools;
 import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTask;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTaskRegistry;
+import com.atina.jdeMCPServer.purchase.model.PendingPurchaseOrderSummary;
+import com.atina.jdeMCPServer.purchase.model.PendingPurchaseOrdersResult;
+import com.atina.jdeMCPServer.purchase.model.PurchaseOrderActionResult;
+import com.atina.jdeMCPServer.purchase.model.PurchaseOrderDetail;
+import com.atina.jdeMCPServer.purchase.model.PurchaseOrderDetailResult;
+import com.atina.jdeMCPServer.purchase.model.ToolStatus;
 import com.atina.jdeMCPServer.purchase.services.JdePurchaseOrderClient;
+import com.atina.jdeMCPServer.salesorder.services.JdeSalesOrderClient;
 import com.atina.jdeMCPServer.security.RealmRoleGuard;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +22,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 
 @Component
 public class JdePurchaseApprovalTool {
@@ -65,40 +73,42 @@ public class JdePurchaseApprovalTool {
         - Review basic information (supplier, amount, currency, date) before deciding what to approve or reject.
         - Choose a specific purchase order to act on in a follow-up step.
 
+        INPUT:
+        - limit: maximum number of orders to return (for example 5 or 10). If not provided or
+          invalid, defaults to 10. Use smaller limits to keep the list manageable.
+        - orderTypeCode / businessUnitCode / statusCodeNext: optional JDE filters; a configured
+          default is used for any that are omitted.
+
+        OUTPUT (structured JSON, see outputSchema):
+        - status "IN_PROGRESS": the query is still running against a busy JDE environment (this can
+          take several minutes). This is NOT an error -- call jde_list_pending_purchase_orders again
+          with the exact same parameters after pollAfterSeconds to get the actual list. Never report
+          this to the user as a failure.
+        - status "OK": orders[] has the matches (capped at limit), each with the four identifiers
+          needed to chain into jde_get_purchase_order_detail / jde_approve_purchase_order /
+          jde_reject_purchase_order (documentOrderTypeCode, documentOrderInvoiceNumber,
+          documentCompanyKeyOrderNo, documentSuffix), plus supplierName, shipToName, amountToApprove,
+          currencyToApprove, daysOld, dateRequested, dateTransaction.
+        - status "FAILED" / "CANCELLED": message explains what happened; retrying is safe.
+
         IMPORTANT FOR THE ASSISTANT:
         - Always call this tool BEFORE asking the user to approve or reject a specific purchase order.
-        - Do NOT invent or assume purchase order numbers or details. Use exactly the values returned by this tool.
-        - This query can take several minutes against a busy JDE environment. If the response says the query is
-          still in progress, this is NOT an error -- simply call jde_list_pending_purchase_orders again with the
-          exact same parameters after a short pause (the suggested wait is included in the response) until you
-          get the actual list. Never report "still in progress" to the user as a failure.
-        - Present the list of purchase orders in a **Markdown table**, one row per purchase order.
-        - Use columns (only if available):
-         • PO ID → documentOrderTypeCode + "-" + documentOrderInvoiceNumber
-         • Company → documentCompanyKeyOrderNo
-         • Supplier → entityNameSupplier
-         • Ship To → entityNameShipTo
-         • Amount → calculateValues.amountToApprove
-         • Currency → calculateValues.currencyToApprove
-         • Days Old → calculateValues.daysOld
-         • Requested → dateRequested
-         • Transaction Date → dateTransaction
-         • Remarks → optional short note: "Very old", "High amount", "Old & high amount"
-        - Sort by **Days Old** (descending). If not available, sort by Request Date (oldest first).
-
-        AFTER THE TABLE:
-        - Provide a short 2–4 sentence summary highlighting:
-            • oldest purchase orders
-            • highest amounts
-            • any clear priority items for review
-        """)
-
-    public String getPendingPurchaseOrders(
+        - Do NOT invent or assume purchase order identifiers. Use exactly the values returned by this tool.
+        - Present orders[] as a Markdown table (PO ID = documentOrderTypeCode + "-" + documentOrderInvoiceNumber,
+          Company, Supplier, Ship To, Amount, Currency, Days Old, Requested, Transaction Date), sorted by
+          Days Old descending (or Requested Date, oldest first, if daysOld isn't meaningful).
+        - If orders[] has exactly `limit` entries, more may exist beyond the limit -- consider asking
+          the user to raise the limit.
+        - After the table, provide a short 2-4 sentence summary highlighting the oldest purchase orders,
+          highest amounts, and any clear priority items for review.
+        """,
+            generateOutputSchema = true
+    )
+    public PendingPurchaseOrdersResult getPendingPurchaseOrders(
             @McpToolParam(
-                    description = """
-                Maximum number of pending purchase orders to return (for example 5 or 10).
-                If not provided or invalid, default to 10.
-                Use smaller limits (like 5–10) to keep the list readable for the user."""
+                    description = "Maximum number of pending purchase orders to return (for example 5 or 10). "
+                            + "If not provided or invalid, defaults to 10.",
+                    required = false
             )
             Integer limit,
             @McpToolParam(
@@ -123,11 +133,10 @@ public class JdePurchaseApprovalTool {
         if (!asyncPendingOrdersEnabled) {
             progressNotifications.send(exchange, meta, 0, null,
                     "Consultando órdenes pendientes en JDE, puede tardar unos segundos...");
-            var orders = jdeClient.getPendingPurchaseOrders(limit, orderTypeCode, businessUnitCode, statusCodeNext);
-            return """
-                   Pending purchase orders (showing up to %d):
-                   %s
-                   """.formatted(limit != null && limit > 0 ? limit : 10, orders);
+            List<PendingPurchaseOrderSummary> orders =
+                    jdeClient.getPendingPurchaseOrders(orderTypeCode, businessUnitCode, statusCodeNext);
+            return new PendingPurchaseOrdersResult(ToolStatus.OK, "", 0,
+                    JdeSalesOrderClient.applyLimit(orders, limit));
         }
 
         var ctx = jdeClient.resolveApproverContext();
@@ -143,18 +152,31 @@ public class JdePurchaseApprovalTool {
                 () -> jdeClient.fetchAllPendingOrdersWithToken(orderTypeCode, businessUnitCode, statusCodeNext, ctx));
 
         return switch (task.status()) {
-            case WORKING, INPUT_REQUIRED -> """
-                    La consulta de órdenes pendientes en JDE está en curso (puede tardar varios minutos). \
-                    Volvé a llamar a jde_list_pending_purchase_orders con los mismos parámetros en unos %d \
-                    segundos para ver el resultado -- esto no es un error.\
-                    """.formatted((task.pollIntervalMs() != null ? task.pollIntervalMs() : defaultPollIntervalMs) / 1000);
-            case COMPLETED -> """
-                    Pending purchase orders (showing up to %d):
-                    %s
-                    """.formatted(limit != null && limit > 0 ? limit : 10,
-                    jdeClient.limitAndFormatPendingOrders((ArrayNode) task.result(), limit));
-            case FAILED -> "Ocurrió un error consultando las órdenes pendientes en JDE: " + task.error();
-            case CANCELLED -> "La consulta fue cancelada. Volvé a llamar a jde_list_pending_purchase_orders para reintentar.";
+            case WORKING, INPUT_REQUIRED -> new PendingPurchaseOrdersResult(
+                    ToolStatus.IN_PROGRESS,
+                    "The query for pending purchase orders is still in progress (this can take several "
+                            + "minutes against a busy JDE environment). Call jde_list_pending_purchase_orders "
+                            + "again with the exact same parameters after pollAfterSeconds to get the "
+                            + "results -- this is not an error.",
+                    (int) ((task.pollIntervalMs() != null ? task.pollIntervalMs() : defaultPollIntervalMs) / 1000),
+                    List.of());
+            case COMPLETED -> {
+                @SuppressWarnings("unchecked")
+                List<PendingPurchaseOrderSummary> orders = (List<PendingPurchaseOrderSummary>) task.result();
+                yield new PendingPurchaseOrdersResult(ToolStatus.OK, "", 0,
+                        JdeSalesOrderClient.applyLimit(orders, limit));
+            }
+            case FAILED -> {
+                log.error("Error listing pending purchase orders: {}", task.error());
+                yield new PendingPurchaseOrdersResult(ToolStatus.FAILED,
+                        "An error occurred while querying pending purchase orders in JDE. "
+                                + "Technical details have been logged in the MCP server. "
+                                + "Ask the user to try again later or contact support.",
+                        0, List.of());
+            }
+            case CANCELLED -> new PendingPurchaseOrdersResult(ToolStatus.CANCELLED,
+                    "The query was cancelled. Call jde_list_pending_purchase_orders again to retry.",
+                    0, List.of());
         };
     }
 
@@ -166,71 +188,35 @@ public class JdePurchaseApprovalTool {
             description = """
             Retrieve detailed information for a specific JDE purchase order that is pending approval.
 
-            BEHAVIOR REQUIREMENTS:
-            - The caller must provide the four required JDE identifiers:
-               * documentOrderTypeCode
-               * documentOrderInvoiceNumber
-               * documentCompanyKeyOrderNo
-               * documentSuffix
-            - The user has already seen the list of pending purchase orders.
-            - Never guess or invent values. If any identifier is missing or unclear, ask the user to provide or confirm it.
-            - When all identifiers are known, call the underlying JDE service to retrieve the purchase order detail.
-            - The user wants to inspect one specific purchase order in more detail
-              before deciding whether to approve or reject it.
+            INPUT:
+            - The caller must provide the four required JDE identifiers, exactly as returned by
+              jde_list_pending_purchase_orders: documentOrderTypeCode, documentOrderInvoiceNumber,
+              documentCompanyKeyOrderNo, documentSuffix.
+            - Never guess or invent values. If any identifier is missing or unclear, ask the user to
+              provide or confirm it (the user has normally already seen the list of pending orders).
 
-            RESPONSE FORMAT (VERY IMPORTANT):
-            After receiving the result, you MUST always format the response using TWO Markdown tables:
-            1) TABLE 1 — PURCHASE ORDER HEADER
-                   - Present the main header fields as a 2-column key/value table.
-                   - Include, if available:
-                     • PO Type
-                     • PO Number
-                     • Company
-                     • Suffix
-                     • Supplier Name
-                     • Ship-To Name
-                     • Requested Date
-                     • Transaction Date
-                     • Total Amount
-                     • Currency
-                     • Days Old
+            OUTPUT (structured JSON, see outputSchema):
+            - status "OK": header and lines are populated. header is a JSON object with the purchase
+              order's header fields (type, number, company, suffix, supplier, ship-to, dates, amounts,
+              currency, etc. -- exact field names depend on the JDE response and are not individually
+              declared in the schema, present whichever of these you find). lines is a JSON array,
+              one entry per order line (item, description, quantity, price, amount, currency, etc.).
+            - status "INVALID_REQUEST": a required identifier was missing.
+            - status "FAILED": message explains the error; retrying is safe.
 
-                   Example structure (for illustration only):
-                   | Field        | Value        |
-                   |-------------|-------------|
-                   | PO Type      | OP          |
-                   | PO Number    | 5067        |
-                   | Company      | 00001       |
-                   | Supplier     | ACME        |
-                   | Total Amount | 12,500 USD  |
-                   | Days Old     | 45          |
-            2) TABLE 2 — LINE ITEM DETAILS
-                   - Present the line items in a Markdown table with one row per line.
-                   - Typical columns (use the ones available from the service response):
-                     • Line
-                     • Item Number
-                     • Description
-                     • Quantity
-                     • Unit Price
-                     • Extended Amount
-                     • Currency
-                     • Any other relevant field (Tax, UOM, etc.)
-
-                   Example structure (for illustration only):
-                   | Line | Item   | Description | Qty | Unit Price | Amount | Currency |
-                   |------|--------|-------------|-----|------------|--------|----------|
-                   | 1    | 355710 | CARBURETOR  | 2   | 5000       | 10000  | USD      |
-                   | 2    | 355711 | FILTER      | 5   | 500        | 2500   | USD      |     
-            
-            AFTER THE TABLES:              
-            - Add a short explanatory summary (2–4 sentences) highlighting important aspects:
-              large amounts, very old orders, unusual line items, potential risks, etc.
-            - End with a clear closing question, for example:
-            Would you like to approve or reject this purchase order? or
-            Would you like to review another purchase order in detail? 
-                    """
+            IMPORTANT FOR THE ASSISTANT:
+            - Present header as a 2-column key/value Markdown table (PO Type, PO Number, Company,
+              Suffix, Supplier Name, Ship-To Name, Requested Date, Transaction Date, Total Amount,
+              Currency, Days Old -- whichever are present in header).
+            - Present lines as a Markdown table, one row per line (Line, Item Number, Description,
+              Quantity, Unit Price, Extended Amount, Currency, and any other relevant field present).
+            - After the tables, add a short 2-4 sentence summary highlighting large amounts, very old
+              orders, unusual line items, or potential risks, then ask whether the user wants to
+              approve/reject this order or review another one in detail.
+            """,
+            generateOutputSchema = true
     )
-    public String getPurchaseOrderDetail(
+    public PurchaseOrderDetailResult getPurchaseOrderDetail(
             @McpToolParam(
                     description = "JDE documentOrderTypeCode, for example 'OP'."
             )
@@ -250,6 +236,17 @@ public class JdePurchaseApprovalTool {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        if (documentOrderTypeCode == null || documentOrderTypeCode.isBlank()
+                || documentOrderInvoiceNumber == null
+                || documentCompanyKeyOrderNo == null || documentCompanyKeyOrderNo.isBlank()
+                || documentSuffix == null || documentSuffix.isBlank()) {
+            return new PurchaseOrderDetailResult(ToolStatus.INVALID_REQUEST,
+                    "Please provide all four purchase order identifiers (documentOrderTypeCode, "
+                            + "documentOrderInvoiceNumber, documentCompanyKeyOrderNo, documentSuffix), "
+                            + "exactly as returned by jde_list_pending_purchase_orders.",
+                    safe(documentOrderTypeCode), documentOrderInvoiceNumber != null ? documentOrderInvoiceNumber.longValue() : 0L,
+                    safe(documentCompanyKeyOrderNo), safe(documentSuffix), Map.of(), List.of());
+        }
 
         log.info(
                 "Requesting detail for PO type={} number={} company={} suffix={}",
@@ -262,7 +259,7 @@ public class JdePurchaseApprovalTool {
             // operaciones BSSV secuenciales (header + line items); se reporta progreso
             // entre ambas para que un cliente MCP que siga el progressToken no timeoutee
             // a mitad de camino.
-            var detail = jdeClient.getPurchaseOrderDetail(
+            PurchaseOrderDetail detail = jdeClient.getPurchaseOrderDetail(
                     documentOrderTypeCode,
                     documentOrderInvoiceNumber,
                     documentCompanyKeyOrderNo,
@@ -270,18 +267,10 @@ public class JdePurchaseApprovalTool {
                     progressMessage -> progressNotifications.send(exchange, meta, 0, null, progressMessage)
             );
 
-            // 'detail' se asume como String (JSON o texto) que el tool devuelve al modelo
-            return """
-                    Detail for purchase order %s %d / %s-%s:
-
-                    %s
-                    """.formatted(
-                    documentOrderTypeCode,
-                    documentOrderInvoiceNumber,
-                    documentCompanyKeyOrderNo,
-                    documentSuffix,
-                    detail
-            );
+            return new PurchaseOrderDetailResult(ToolStatus.OK, "",
+                    documentOrderTypeCode, documentOrderInvoiceNumber.longValue(),
+                    documentCompanyKeyOrderNo, documentSuffix,
+                    detail.header(), detail.lines());
 
         } catch (Exception e) {
             log.error(
@@ -290,18 +279,19 @@ public class JdePurchaseApprovalTool {
                     documentCompanyKeyOrderNo, documentSuffix, e
             );
 
-            return """
-                    An error occurred while trying to retrieve the details \
-                    of purchase order %s %d / %s-%s.
-                    Technical details have been logged in the MCP server.
-                    Ask the user to try again later or contact support.
-                    """.formatted(
-                    documentOrderTypeCode,
-                    documentOrderInvoiceNumber,
-                    documentCompanyKeyOrderNo,
-                    documentSuffix
-            );
+            return new PurchaseOrderDetailResult(ToolStatus.FAILED,
+                    "An error occurred while trying to retrieve the details of purchase order "
+                            + documentOrderTypeCode + " " + documentOrderInvoiceNumber + " / "
+                            + documentCompanyKeyOrderNo + "-" + documentSuffix + ". "
+                            + "Technical details have been logged in the MCP server. "
+                            + "Ask the user to try again later or contact support.",
+                    documentOrderTypeCode, documentOrderInvoiceNumber.longValue(),
+                    documentCompanyKeyOrderNo, documentSuffix, Map.of(), List.of());
         }
+    }
+
+    private static String safe(String value) {
+        return value != null ? value : "";
     }
 
     // =========================
@@ -316,18 +306,22 @@ public class JdePurchaseApprovalTool {
             - Listing the pending purchase orders, and
             - (optionally) showing the purchase order detail to the user.
 
+            OUTPUT (structured JSON, see outputSchema):
+            - status "OK": the order was approved. action is "A".
+            - status "UNAUTHORIZED": the caller does not have the required Keycloak role.
+            - status "FAILED": message explains the error (e.g. the order isn't cached anymore --
+              call jde_list_pending_purchase_orders again first); retrying after fixing the cause is safe.
+
             IMPORTANT FOR THE ASSISTANT:
             - You MUST provide all four JDE identifiers exactly as returned by the pending-orders or detail tool:
-              * documentOrderTypeCode
-              * documentOrderInvoiceNumber
-              * documentCompanyKeyOrderNo
-              * documentSuffix
+              documentOrderTypeCode, documentOrderInvoiceNumber, documentCompanyKeyOrderNo, documentSuffix.
             - Do NOT guess or invent values.
             - Ask the user for a short remark explaining the approval reason if appropriate.
             - The remark will be truncated to 30 characters as required by the backend API.
-            """
+            """,
+            generateOutputSchema = true
     )
-    public String approvePurchaseOrder(
+    public PurchaseOrderActionResult approvePurchaseOrder(
             @McpToolParam(description = "JDE documentOrderTypeCode, e.g. 'OP'.")
             String documentOrderTypeCode,
             @McpToolParam(description = "JDE documentOrderInvoiceNumber, e.g. 5067.")
@@ -365,18 +359,22 @@ public class JdePurchaseApprovalTool {
             - Listing the pending purchase orders, and
             - (optionally) showing the purchase order detail to the user.
 
+            OUTPUT (structured JSON, see outputSchema):
+            - status "OK": the order was rejected. action is "R".
+            - status "UNAUTHORIZED": the caller does not have the required Keycloak role.
+            - status "FAILED": message explains the error (e.g. the order isn't cached anymore --
+              call jde_list_pending_purchase_orders again first); retrying after fixing the cause is safe.
+
             IMPORTANT FOR THE ASSISTANT:
             - You MUST provide all four JDE identifiers exactly as returned by the pending-orders or detail tool:
-              * documentOrderTypeCode
-              * documentOrderInvoiceNumber
-              * documentCompanyKeyOrderNo
-              * documentSuffix
+              documentOrderTypeCode, documentOrderInvoiceNumber, documentCompanyKeyOrderNo, documentSuffix.
             - Do NOT guess or invent values.
             - Always ask the user for a concise remark explaining the rejection reason.
             - The remark will be truncated to 30 characters as required by the backend API.
-            """
+            """,
+            generateOutputSchema = true
     )
-    public String rejectPurchaseOrder(
+    public PurchaseOrderActionResult rejectPurchaseOrder(
             @McpToolParam(description = "JDE documentOrderTypeCode, e.g. 'OP'.")
             String documentOrderTypeCode,
             @McpToolParam(description = "JDE documentOrderInvoiceNumber, e.g. 5067.")
@@ -405,7 +403,7 @@ public class JdePurchaseApprovalTool {
     // =========================
     // Método interno común
     // =========================
-    private String processPurchaseOrderInternal(
+    private PurchaseOrderActionResult processPurchaseOrderInternal(
             String action, // "A" o "R"
             String documentOrderTypeCode,
             Integer documentOrderInvoiceNumber,
@@ -415,6 +413,7 @@ public class JdePurchaseApprovalTool {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        long safeInvoiceNumber = documentOrderInvoiceNumber != null ? documentOrderInvoiceNumber.longValue() : 0L;
 
         // Autorización: decidir sobre una OC exige el rol de aprobador en Keycloak.
         // Listar y ver detalle quedan abiertos a cualquier usuario autenticado.
@@ -422,14 +421,13 @@ public class JdePurchaseApprovalTool {
             log.warn("Intento de {} OC {}-{} sin el rol '{}'",
                     "A".equals(action) ? "aprobar" : "rechazar",
                     documentOrderTypeCode, documentOrderInvoiceNumber, approverRole);
-            return """
-                   You are not authorized to %s purchase orders: your user does not have \
-                   the '%s' role in Keycloak. Ask your administrator to assign it \
-                   (Keycloak console -> Users -> your user -> Role mapping) and log in again.
-                   """.formatted(
-                    "A".equals(action) ? "approve" : "reject",
-                    approverRole
-            );
+            return new PurchaseOrderActionResult(ToolStatus.UNAUTHORIZED,
+                    "You are not authorized to " + ("A".equals(action) ? "approve" : "reject")
+                            + " purchase orders: your user does not have the '" + approverRole
+                            + "' role in Keycloak. Ask your administrator to assign it "
+                            + "(Keycloak console -> Users -> your user -> Role mapping) and log in again.",
+                    action, safe(documentOrderTypeCode), safeInvoiceNumber,
+                    safe(documentCompanyKeyOrderNo), safe(documentSuffix));
         }
 
         String safeRemark = (remark != null) ? remark.trim() : "";
@@ -441,7 +439,7 @@ public class JdePurchaseApprovalTool {
                 "Enviando la decisión a JDE, puede tardar unos segundos...");
 
         try {
-            String response = jdeClient.processPurchaseOrder(
+            jdeClient.processPurchaseOrder(
                     action,
                     documentOrderTypeCode,
                     documentOrderInvoiceNumber,
@@ -449,39 +447,29 @@ public class JdePurchaseApprovalTool {
                     documentSuffix,
                     safeRemark
             );
-            return """
-                   Purchase order %s %d / %s-%s has been processed with action '%s'.
-                   Backend response:
-                   %s
-                   """.formatted(
-                    documentOrderTypeCode,
-                    documentOrderInvoiceNumber,
-                    documentCompanyKeyOrderNo,
-                    documentSuffix,
-                    action,
-                    response
-            );
+            return new PurchaseOrderActionResult(ToolStatus.OK, "",
+                    action, safe(documentOrderTypeCode), safeInvoiceNumber,
+                    safe(documentCompanyKeyOrderNo), safe(documentSuffix));
         } catch (IllegalStateException e) {
             log.warn("Purchase order not cached action={} type={} number={} company={} suffix={}: {}",
                     action, documentOrderTypeCode, documentOrderInvoiceNumber,
                     documentCompanyKeyOrderNo, documentSuffix, e.getMessage());
 
-            return e.getMessage();
+            return new PurchaseOrderActionResult(ToolStatus.FAILED, e.getMessage(),
+                    action, safe(documentOrderTypeCode), safeInvoiceNumber,
+                    safe(documentCompanyKeyOrderNo), safe(documentSuffix));
         } catch (Exception e) {
             log.error("Error processing purchase order action={} type={} number={} company={} suffix={}",
                     action, documentOrderTypeCode, documentOrderInvoiceNumber,
                     documentCompanyKeyOrderNo, documentSuffix, e);
 
-            return """
-                   An error occurred while trying to process the purchase order %s %d / %s-%s \
-                   with action '%s'. Technical details have been logged in the MCP server.
-                   """.formatted(
-                    documentOrderTypeCode,
-                    documentOrderInvoiceNumber,
-                    documentCompanyKeyOrderNo,
-                    documentSuffix,
-                    action
-            );
+            return new PurchaseOrderActionResult(ToolStatus.FAILED,
+                    "An error occurred while trying to process the purchase order "
+                            + documentOrderTypeCode + " " + documentOrderInvoiceNumber + " / "
+                            + documentCompanyKeyOrderNo + "-" + documentSuffix + " with action '" + action
+                            + "'. Technical details have been logged in the MCP server.",
+                    action, safe(documentOrderTypeCode), safeInvoiceNumber,
+                    safe(documentCompanyKeyOrderNo), safe(documentSuffix));
         }
     }
 }
