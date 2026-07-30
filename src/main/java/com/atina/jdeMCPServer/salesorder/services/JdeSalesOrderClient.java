@@ -46,6 +46,23 @@ public class JdeSalesOrderClient {
     private static final String OP_GET_CUSTOMER_ITEM_PRICE =
             "oracle.e1.bssv.JP420000.SalesOrderManager.getCustomerItemPrice";
 
+    // Mismo default (10) que usa JdePurchaseOrderClient.limitAndFormatPendingOrders para
+    // ordenes de compra pendientes -- aplicado aca a busquedas de items/clientes por el
+    // mismo motivo: el microservicio ya trae los resultados con su propio limite, pero sin
+    // recortar mas el LLM puede recibir mas filas de las que necesita para razonar.
+    private static final int DEFAULT_RESULT_LIMIT = 10;
+
+    /**
+     * Recorta una lista ya recuperada a lo sumo a {@code limit} elementos (default
+     * DEFAULT_RESULT_LIMIT si es null o <= 0). No vuelve a consultar el backend --
+     * pensado para aplicarse sobre datos ya resueltos (incluso cacheados por
+     * LongRunningTaskRegistry), no como parametro de la request al Gateway.
+     */
+    public static <T> List<T> applyLimit(List<T> items, Integer limit) {
+        int effectiveLimit = (limit != null && limit > 0) ? limit : DEFAULT_RESULT_LIMIT;
+        return items.size() > effectiveLimit ? items.subList(0, effectiveLimit) : items;
+    }
+
     private final WebClient webClient;
     private final WebClient gatewayWebClient;
     private final JdeAuthService authService;

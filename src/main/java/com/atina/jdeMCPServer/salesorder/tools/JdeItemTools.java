@@ -81,12 +81,14 @@ public class JdeItemTools {
             INPUT:
             - itemSearchText: the item name/description or a fragment of it (e.g. "Bike, Mountain
               Red"). The search is a partial match, so a single fragment may return several items.
+            - limit: maximum number of items to return (for example 5 or 10). If not provided or
+              invalid, defaults to 10. Use smaller limits to keep the list manageable.
 
             OUTPUT (structured JSON, see outputSchema):
             - status "IN_PROGRESS": the search is still running against a busy JDE environment. This
               is NOT an error -- call jde_search_items again with the exact same itemSearchText after
               pollAfterSeconds to get the actual results. Never report this to the user as a failure.
-            - status "OK": items[] has the matches, each with itemId and description.
+            - status "OK": items[] has the matches (capped at limit), each with itemId and description.
             - status "FAILED" / "CANCELLED": message explains what happened; retrying is safe.
             - status "INVALID_REQUEST": itemSearchText was missing or blank.
 
@@ -98,6 +100,8 @@ public class JdeItemTools {
                 • If several match, list them all and ASK the user which itemId they mean before
                   chaining into jde_get_item_price. Do not assume the first one.
                 • If none match, say so and ask the user to refine the search text.
+                • If items[] has exactly `limit` entries, more matches may exist beyond the limit --
+                  consider asking the user to refine the search text or raise the limit.
             """,
             generateOutputSchema = true
     )
@@ -106,6 +110,12 @@ public class JdeItemTools {
                     description = "Item name/description or a fragment of it, e.g. 'Bike, Mountain Red'. Partial match; may return several items."
             )
             String itemSearchText,
+            @McpToolParam(
+                    description = "Maximum number of items to return (for example 5 or 10). "
+                            + "If not provided or invalid, defaults to 10.",
+                    required = false
+            )
+            Integer limit,
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
@@ -122,7 +132,7 @@ public class JdeItemTools {
                     "Buscando artículos en JDE, puede tardar unos segundos...");
             try {
                 List<ItemSummary> items = soClient.searchItems(searchText);
-                return new ItemSearchResult(ToolStatus.OK, "", 0, items);
+                return new ItemSearchResult(ToolStatus.OK, "", 0, JdeSalesOrderClient.applyLimit(items, limit));
             } catch (Exception e) {
                 log.error("Error searching items with text '{}'", searchText, e);
                 return new ItemSearchResult(ToolStatus.FAILED,
@@ -155,7 +165,7 @@ public class JdeItemTools {
             case COMPLETED -> {
                 @SuppressWarnings("unchecked")
                 List<ItemSummary> items = (List<ItemSummary>) task.result();
-                yield new ItemSearchResult(ToolStatus.OK, "", 0, items);
+                yield new ItemSearchResult(ToolStatus.OK, "", 0, JdeSalesOrderClient.applyLimit(items, limit));
             }
             case FAILED -> {
                 log.error("Error searching items with text '{}': {}", searchText, task.error());

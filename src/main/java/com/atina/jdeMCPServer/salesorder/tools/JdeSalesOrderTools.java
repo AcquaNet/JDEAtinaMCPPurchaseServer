@@ -54,9 +54,12 @@ public class JdeSalesOrderTools {
             INPUT:
             - entityName: the customer name or a fragment of it (e.g. "Capital"). The search is a
               partial match, so a single fragment may return several customers.
+            - limit: maximum number of customers to return (for example 5 or 10). If not provided
+              or invalid, defaults to 10. Use smaller limits to keep the list manageable.
 
             OUTPUT (structured JSON, see outputSchema):
-            - status "OK": customers[] has the matches, each with name and addressBookNumber.
+            - status "OK": customers[] has the matches (capped at limit), each with name and
+              addressBookNumber.
             - status "FAILED": message explains the error; retrying is safe.
             - status "INVALID_REQUEST": entityName was missing or blank.
 
@@ -68,6 +71,8 @@ public class JdeSalesOrderTools {
                 • If several match, list them all and ASK the user which addressBookNumber they mean
                   before chaining into any follow-up tool. Do not assume the first one.
                 • If none match, say so and ask the user to refine or confirm the name.
+                • If customers[] has exactly `limit` entries, more matches may exist beyond the
+                  limit -- consider asking the user to refine the name or raise the limit.
             """,
             generateOutputSchema = true
     )
@@ -76,6 +81,12 @@ public class JdeSalesOrderTools {
                     description = "Customer name or a fragment of it, e.g. 'Capital'. Partial match; may return several customers."
             )
             String entityName,
+            @McpToolParam(
+                    description = "Maximum number of customers to return (for example 5 or 10). "
+                            + "If not provided or invalid, defaults to 10.",
+                    required = false
+            )
+            Integer limit,
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
@@ -92,7 +103,7 @@ public class JdeSalesOrderTools {
 
         try {
             List<CustomerSummary> customers = soClient.lookupAddressBookByName(name);
-            return new CustomerLookupResult(ToolStatus.OK, "", customers);
+            return new CustomerLookupResult(ToolStatus.OK, "", JdeSalesOrderClient.applyLimit(customers, limit));
 
         } catch (Exception e) {
             log.error("Error looking up customers by name '{}'", name, e);
