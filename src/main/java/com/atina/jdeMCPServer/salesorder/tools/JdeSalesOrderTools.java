@@ -1,6 +1,7 @@
 package com.atina.jdeMCPServer.salesorder.tools;
 
 import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
+import com.atina.jdeMCPServer.mcp.CorrelationIdContext;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTask;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTaskRegistry;
 import com.atina.jdeMCPServer.salesorder.model.CustomerDetail;
@@ -35,6 +36,8 @@ public class JdeSalesOrderTools {
     private final long customerDetailInitialWaitSeconds;
     private final long gatewayTimeoutMinutes;
     private final long defaultPollIntervalMs;
+    private final CorrelationIdContext correlationIdContext;
+
 
     public JdeSalesOrderTools(
             JdeSalesOrderClient soClient,
@@ -45,10 +48,12 @@ public class JdeSalesOrderTools {
             @Value("${jde.customer-detail.async.enabled:true}") boolean asyncCustomerDetailEnabled,
             @Value("${jde.customer-detail.async.initial-wait-seconds:8}") long customerDetailInitialWaitSeconds,
             @Value("${jde.atina.gateway.timeout-minutes:10}") long gatewayTimeoutMinutes,
-            @Value("${jde.mcp.tasks.default-poll-interval-ms:5000}") long defaultPollIntervalMs) {
+            @Value("${jde.mcp.tasks.default-poll-interval-ms:5000}") long defaultPollIntervalMs,
+            CorrelationIdContext correlationIdContext) {
         this.soClient = soClient;
         this.progressNotifications = progressNotifications;
         this.taskRegistry = taskRegistry;
+        this.correlationIdContext = correlationIdContext;
         this.asyncCustomerLookupEnabled = asyncCustomerLookupEnabled;
         this.customerLookupInitialWaitSeconds = customerLookupInitialWaitSeconds;
         this.asyncCustomerDetailEnabled = asyncCustomerDetailEnabled;
@@ -121,6 +126,11 @@ public class JdeSalesOrderTools {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        // Extract correlation ID from MCP _meta and store in context
+        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
+        correlationIdContext.setCorrelationId(clientCorrelationId);
+        log.info("Tool 'jde_lookup_customer_by_name' called with correlation ID: {}", correlationIdContext.getCorrelationId());
+        
         if (entityName == null || entityName.isBlank()) {
             return new CustomerLookupResult(ToolStatus.INVALID_REQUEST,
                     "Please provide a customer name (or part of it) to search for.", 0, List.of());
@@ -233,6 +243,11 @@ public class JdeSalesOrderTools {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        // Extract correlation ID from MCP _meta and store in context
+        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
+        correlationIdContext.setCorrelationId(clientCorrelationId);
+        log.info("Tool 'jde_get_customer_detail' called with correlation ID: {}", correlationIdContext.getCorrelationId());
+        
         if (entityId == null || entityId <= 0) {
             return new CustomerDetailResult(ToolStatus.INVALID_REQUEST,
                     "Please provide a valid customer AB Number (positive integer). "

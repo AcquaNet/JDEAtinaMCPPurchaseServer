@@ -2,6 +2,7 @@ package com.atina.jdeMCPServer.purchase.services;
 
 import com.atina.jdeMCPServer.auth.JdeAuthService;
 import com.atina.jdeMCPServer.gateway.RequestCoalescer;
+import com.atina.jdeMCPServer.mcp.CorrelationIdContext;
 import com.atina.jdeMCPServer.purchase.model.PendingPurchaseOrderSummary;
 import com.atina.jdeMCPServer.purchase.model.PurchaseOrderDetail;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -67,6 +68,7 @@ public class JdePurchaseOrderClient {
     private final String defaultStatusCodeNext;
     private final String defaultStatusApproval;
     private final String p43081Version;
+    private final CorrelationIdContext correlationIdContext;
 
     public JdePurchaseOrderClient(
             JdeAuthService authService,
@@ -96,6 +98,7 @@ public class JdePurchaseOrderClient {
         this.defaultStatusCodeNext = defaultStatusCodeNext;
         this.defaultStatusApproval = defaultStatusApproval;
         this.p43081Version = p43081Version;
+        this.correlationIdContext = correlationIdContext;
     }
 
     // =========================================================================
@@ -375,11 +378,14 @@ public class JdePurchaseOrderClient {
         body.put("listaDeValores", List.of(value));
         body.put("connectorName", "WS");
 
+        String correlationId = correlationIdContext.getCorrelationId();
+
         return gatewayWebClient.post()
                 .uri(gatewayBaseUrl + "/v1/operations/execute")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .header("Token", "null")
                 .header("TransactionId", gatewayTransactionId)
+                .header("correlationUUID", correlationId)
                 .accept(MediaType.APPLICATION_JSON)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)

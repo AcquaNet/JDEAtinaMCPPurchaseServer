@@ -1,6 +1,7 @@
 package com.atina.jdeMCPServer.salesorder.tools;
 
 import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
+import com.atina.jdeMCPServer.mcp.CorrelationIdContext;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTask;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTaskRegistry;
 import com.atina.jdeMCPServer.salesorder.model.ItemListPriceEntry;
@@ -40,6 +41,7 @@ public class JdeItemTools {
     private final long itemListPriceInitialWaitSeconds;
     private final long gatewayTimeoutMinutes;
     private final long defaultPollIntervalMs;
+    private final CorrelationIdContext correlationIdContext;
 
     public JdeItemTools(
             JdeSalesOrderClient soClient,
@@ -64,6 +66,7 @@ public class JdeItemTools {
         this.itemListPriceInitialWaitSeconds = itemListPriceInitialWaitSeconds;
         this.gatewayTimeoutMinutes = gatewayTimeoutMinutes;
         this.defaultPollIntervalMs = defaultPollIntervalMs;
+        this.correlationIdContext = correlationIdContext;
     }
 
     // =========================================================================
@@ -127,6 +130,11 @@ public class JdeItemTools {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        // Extract correlation ID from MCP _meta and store in context
+        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
+        correlationIdContext.setCorrelationId(clientCorrelationId);
+        log.info("Tool 'jde_search_items' called with correlation ID: {}", correlationIdContext.getCorrelationId());
+        
         if (itemSearchText == null || itemSearchText.isBlank()) {
             return new ItemSearchResult(ToolStatus.INVALID_REQUEST,
                     "Please provide an item name (or part of it) to search for.", 0, List.of());
@@ -277,6 +285,11 @@ public class JdeItemTools {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        // Extract correlation ID from MCP _meta and store in context
+        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
+        correlationIdContext.setCorrelationId(clientCorrelationId);
+        log.info("Tool 'jde_get_item_price' called with correlation ID: {}", correlationIdContext.getCorrelationId());
+        
         int safeItemId = itemId != null ? itemId : 0;
         int safeEntityId = entityId != null ? entityId : 0;
         String safeBusinessUnit = businessUnit != null ? businessUnit : "";
@@ -423,6 +436,11 @@ public class JdeItemTools {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        // Extract correlation ID from MCP _meta and store in context
+        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
+        correlationIdContext.setCorrelationId(clientCorrelationId);
+        log.info("Tool 'jde_get_item_list_price' called with correlation ID: {}", correlationIdContext.getCorrelationId());
+        
         boolean hasItemId = itemId != null && itemId > 0;
         boolean hasItemCatalog = itemCatalog != null && !itemCatalog.isBlank();
         if (!hasItemId && !hasItemCatalog) {

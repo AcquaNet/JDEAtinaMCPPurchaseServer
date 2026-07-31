@@ -1,6 +1,7 @@
 package com.atina.jdeMCPServer.salesorder.tools;
 
 import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
+import com.atina.jdeMCPServer.mcp.CorrelationIdContext;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTask;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTaskRegistry;
 import com.atina.jdeMCPServer.salesorder.model.CustomerCreditInfoResult;
@@ -31,6 +32,8 @@ public class JdeCustomerCreditTool {
     private final long initialWaitSeconds;
     private final long gatewayTimeoutMinutes;
     private final long defaultPollIntervalMs;
+    private final CorrelationIdContext correlationIdContext;
+
 
     public JdeCustomerCreditTool(
             JdeSalesOrderClient soClient,
@@ -43,6 +46,7 @@ public class JdeCustomerCreditTool {
         this.soClient = soClient;
         this.progressNotifications = progressNotifications;
         this.taskRegistry = taskRegistry;
+        this.correlationIdContext = correlationIdContext;
         this.asyncCustomerCreditEnabled = asyncCustomerCreditEnabled;
         this.initialWaitSeconds = initialWaitSeconds;
         this.gatewayTimeoutMinutes = gatewayTimeoutMinutes;
@@ -93,6 +97,11 @@ public class JdeCustomerCreditTool {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        // Extract correlation ID from MCP _meta and store in context
+        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
+        correlationIdContext.setCorrelationId(clientCorrelationId);
+        log.info("Tool 'jde_get_customer_credit_info' called with correlation ID: {}", correlationIdContext.getCorrelationId());
+        
         if (entityId == null || entityId <= 0) {
             return new CustomerCreditInfoResult(ToolStatus.INVALID_REQUEST,
                     "Please provide a valid customer number (positive integer).",

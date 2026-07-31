@@ -1,6 +1,7 @@
 package com.atina.jdeMCPServer.purchase.tools;
 
 import com.atina.jdeMCPServer.mcp.McpProgressNotifications;
+import com.atina.jdeMCPServer.mcp.CorrelationIdContext;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTask;
 import com.atina.jdeMCPServer.mcp.tasks.LongRunningTaskRegistry;
 import com.atina.jdeMCPServer.purchase.model.PendingPurchaseOrderSummary;
@@ -39,6 +40,8 @@ public class JdePurchaseApprovalTool {
     private final long initialWaitSeconds;
     private final long gatewayTimeoutMinutes;
     private final long defaultPollIntervalMs;
+    private final CorrelationIdContext correlationIdContext;
+
 
     public JdePurchaseApprovalTool(JdePurchaseOrderClient jdeClient,
                                    RealmRoleGuard roleGuard,
@@ -48,12 +51,14 @@ public class JdePurchaseApprovalTool {
                                    @Value("${jde.purchase.pending-orders.async.enabled:true}") boolean asyncPendingOrdersEnabled,
                                    @Value("${jde.purchase.pending-orders.async.initial-wait-seconds:8}") long initialWaitSeconds,
                                    @Value("${jde.atina.gateway.timeout-minutes:10}") long gatewayTimeoutMinutes,
-                                   @Value("${jde.mcp.tasks.default-poll-interval-ms:5000}") long defaultPollIntervalMs) {
+                                   @Value("${jde.mcp.tasks.default-poll-interval-ms:5000}") long defaultPollIntervalMs,
+            CorrelationIdContext correlationIdContext) {
         this.jdeClient = jdeClient;
         this.roleGuard = roleGuard;
         this.approverRole = approverRole;
         this.progressNotifications = progressNotifications;
         this.taskRegistry = taskRegistry;
+        this.correlationIdContext = correlationIdContext;
         this.asyncPendingOrdersEnabled = asyncPendingOrdersEnabled;
         this.initialWaitSeconds = initialWaitSeconds;
         this.gatewayTimeoutMinutes = gatewayTimeoutMinutes;
@@ -236,6 +241,11 @@ public class JdePurchaseApprovalTool {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        // Extract correlation ID from MCP _meta and store in context
+        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
+        correlationIdContext.setCorrelationId(clientCorrelationId);
+        log.info("Tool 'jde_get_purchase_order_detail' called with correlation ID: {}", correlationIdContext.getCorrelationId());
+        
         if (documentOrderTypeCode == null || documentOrderTypeCode.isBlank()
                 || documentOrderInvoiceNumber == null
                 || documentCompanyKeyOrderNo == null || documentCompanyKeyOrderNo.isBlank()
@@ -335,6 +345,11 @@ public class JdePurchaseApprovalTool {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        // Extract correlation ID from MCP _meta and store in context
+        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
+        correlationIdContext.setCorrelationId(clientCorrelationId);
+        log.info("Tool 'jde_approve_purchase_order' called with correlation ID: {}", correlationIdContext.getCorrelationId());
+        
         return processPurchaseOrderInternal(
                 "A",
                 documentOrderTypeCode,
@@ -388,6 +403,11 @@ public class JdePurchaseApprovalTool {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        // Extract correlation ID from MCP _meta and store in context
+        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
+        correlationIdContext.setCorrelationId(clientCorrelationId);
+        log.info("Tool 'jde_reject_purchase_order' called with correlation ID: {}", correlationIdContext.getCorrelationId());
+        
         return processPurchaseOrderInternal(
                 "R",
                 documentOrderTypeCode,

@@ -2,6 +2,7 @@ package com.atina.jdeMCPServer.salesorder.services;
 
 import com.atina.jdeMCPServer.auth.JdeAuthService;
 import com.atina.jdeMCPServer.gateway.RequestCoalescer;
+import com.atina.jdeMCPServer.mcp.CorrelationIdContext;
 import com.atina.jdeMCPServer.salesorder.model.CustomerAddress;
 import com.atina.jdeMCPServer.salesorder.model.CustomerCreditInfo;
 import com.atina.jdeMCPServer.salesorder.model.CustomerCreditSummary;
@@ -80,6 +81,7 @@ public class JdeSalesOrderClient {
     private final RequestCoalescer requestCoalescer;
     private final String gatewayBaseUrl;
     private final String gatewayTransactionId;
+    private final CorrelationIdContext correlationIdContext;
 
     public JdeSalesOrderClient(
             JdeAuthService authService,
@@ -97,6 +99,7 @@ public class JdeSalesOrderClient {
         this.requestCoalescer = requestCoalescer;
         this.gatewayBaseUrl = gatewayBaseUrl;
         this.gatewayTransactionId = gatewayTransactionId;
+        this.correlationIdContext = correlationIdContext;
     }
 
     /**
@@ -576,11 +579,14 @@ public class JdeSalesOrderClient {
         body.put("listaDeValores", List.of(value));
         body.put("connectorName", "WS");
 
+        String correlationId = correlationIdContext.getCorrelationId();
+
         return gatewayWebClient.post()
                 .uri(gatewayBaseUrl + "/v1/operations/execute")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .header("Token", "null")
                 .header("TransactionId", gatewayTransactionId)
+            .header("correlationUUID", correlationId)
                 .accept(MediaType.APPLICATION_JSON)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
