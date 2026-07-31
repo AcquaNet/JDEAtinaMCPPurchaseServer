@@ -35,6 +35,9 @@ build/
 ### H2 identity-mapping DB ###
 /data/
 
+### Archivo de log (logging.file.name, ver application.properties) ###
+/logs/
+
 ### Docker deploy secrets (docker/.env es el unico con placeholders committeable) ###
 docker/.env.stage
 docker/.env.prod
