@@ -42,7 +42,8 @@ public class JdeCustomerCreditTool {
             @Value("${jde.customer-credit.async.enabled:true}") boolean asyncCustomerCreditEnabled,
             @Value("${jde.customer-credit.async.initial-wait-seconds:8}") long initialWaitSeconds,
             @Value("${jde.atina.gateway.timeout-minutes:10}") long gatewayTimeoutMinutes,
-            @Value("${jde.mcp.tasks.default-poll-interval-ms:5000}") long defaultPollIntervalMs) {
+            @Value("${jde.mcp.tasks.default-poll-interval-ms:5000}") long defaultPollIntervalMs,
+            CorrelationIdContext correlationIdContext) {
         this.soClient = soClient;
         this.progressNotifications = progressNotifications;
         this.taskRegistry = taskRegistry;
@@ -97,11 +98,9 @@ public class JdeCustomerCreditTool {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
-        // Extract correlation ID from MCP _meta and store in context
-        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
-        correlationIdContext.setCorrelationId(clientCorrelationId);
-        log.info("Tool 'jde_get_customer_credit_info' called with correlation ID: {}", correlationIdContext.getCorrelationId());
-        
+        String correlationId = correlationIdContext.extractAndSet(meta);
+        log.info("Tool 'jde_get_customer_credit_info' called with correlation ID: {}", correlationId);
+
         if (entityId == null || entityId <= 0) {
             return new CustomerCreditInfoResult(ToolStatus.INVALID_REQUEST,
                     "Please provide a valid customer number (positive integer).",
@@ -135,7 +134,8 @@ public class JdeCustomerCreditTool {
                 Duration.ofMinutes(gatewayTimeoutMinutes + 1),
                 defaultPollIntervalMs,
                 Duration.ofSeconds(initialWaitSeconds),
-                () -> soClient.getCustomerCreditInfoWithToken(entityId, token));
+                correlationIdContext.wrapForBackgroundThread(correlationId,
+                        () -> soClient.getCustomerCreditInfoWithToken(entityId, token)));
 
         return switch (task.status()) {
             case WORKING, INPUT_REQUIRED -> new CustomerCreditInfoResult(

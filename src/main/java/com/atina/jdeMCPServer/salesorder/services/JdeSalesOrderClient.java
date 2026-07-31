@@ -89,7 +89,8 @@ public class JdeSalesOrderClient {
             RequestCoalescer requestCoalescer,
             @Value("${jde.atina.gateway.base-url}") String gatewayBaseUrl,
             @Value("${jde.atina.gateway.timeout-minutes:10}") int gatewayTimeoutMinutes,
-            @Value("${jde.atina.gateway.transaction-id:0}") String gatewayTransactionId) {
+            @Value("${jde.atina.gateway.transaction-id:0}") String gatewayTransactionId,
+            CorrelationIdContext correlationIdContext) {
 
         this.gatewayWebClient = WebClient.builder().clientConnector(new ReactorClientHttpConnector(
                 HttpClient.create().responseTimeout(Duration.ofMinutes(gatewayTimeoutMinutes))
@@ -586,7 +587,7 @@ public class JdeSalesOrderClient {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .header("Token", "null")
                 .header("TransactionId", gatewayTransactionId)
-            .header("correlationUUID", correlationId)
+                .header("correlationUUID", correlationId)
                 .accept(MediaType.APPLICATION_JSON)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)

@@ -126,11 +126,9 @@ public class JdeSalesOrderTools {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
-        // Extract correlation ID from MCP _meta and store in context
-        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
-        correlationIdContext.setCorrelationId(clientCorrelationId);
-        log.info("Tool 'jde_lookup_customer_by_name' called with correlation ID: {}", correlationIdContext.getCorrelationId());
-        
+        String correlationId = correlationIdContext.extractAndSet(meta);
+        log.info("Tool 'jde_lookup_customer_by_name' called with correlation ID: {}", correlationId);
+
         if (entityName == null || entityName.isBlank()) {
             return new CustomerLookupResult(ToolStatus.INVALID_REQUEST,
                     "Please provide a customer name (or part of it) to search for.", 0, List.of());
@@ -163,7 +161,8 @@ public class JdeSalesOrderTools {
                 Duration.ofMinutes(gatewayTimeoutMinutes + 1),
                 defaultPollIntervalMs,
                 Duration.ofSeconds(customerLookupInitialWaitSeconds),
-                () -> soClient.lookupAddressBookByNameWithToken(name, token));
+                correlationIdContext.wrapForBackgroundThread(correlationId,
+                        () -> soClient.lookupAddressBookByNameWithToken(name, token)));
 
         return switch (task.status()) {
             case WORKING, INPUT_REQUIRED -> new CustomerLookupResult(
@@ -243,11 +242,9 @@ public class JdeSalesOrderTools {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
-        // Extract correlation ID from MCP _meta and store in context
-        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
-        correlationIdContext.setCorrelationId(clientCorrelationId);
-        log.info("Tool 'jde_get_customer_detail' called with correlation ID: {}", correlationIdContext.getCorrelationId());
-        
+        String correlationId = correlationIdContext.extractAndSet(meta);
+        log.info("Tool 'jde_get_customer_detail' called with correlation ID: {}", correlationId);
+
         if (entityId == null || entityId <= 0) {
             return new CustomerDetailResult(ToolStatus.INVALID_REQUEST,
                     "Please provide a valid customer AB Number (positive integer). "
@@ -281,7 +278,8 @@ public class JdeSalesOrderTools {
                 Duration.ofMinutes(gatewayTimeoutMinutes + 1),
                 defaultPollIntervalMs,
                 Duration.ofSeconds(customerDetailInitialWaitSeconds),
-                () -> soClient.getCustomerDetailWithToken(entityId, token));
+                correlationIdContext.wrapForBackgroundThread(correlationId,
+                        () -> soClient.getCustomerDetailWithToken(entityId, token)));
 
         return switch (task.status()) {
             case WORKING, INPUT_REQUIRED -> new CustomerDetailResult(

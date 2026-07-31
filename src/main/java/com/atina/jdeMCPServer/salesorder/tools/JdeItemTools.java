@@ -54,7 +54,8 @@ public class JdeItemTools {
             @Value("${jde.item-list-price.async.enabled:true}") boolean asyncItemListPriceEnabled,
             @Value("${jde.item-list-price.async.initial-wait-seconds:8}") long itemListPriceInitialWaitSeconds,
             @Value("${jde.atina.gateway.timeout-minutes:10}") long gatewayTimeoutMinutes,
-            @Value("${jde.mcp.tasks.default-poll-interval-ms:5000}") long defaultPollIntervalMs) {
+            @Value("${jde.mcp.tasks.default-poll-interval-ms:5000}") long defaultPollIntervalMs,
+            CorrelationIdContext correlationIdContext) {
         this.soClient = soClient;
         this.defaultUnitOfMeasure = defaultUnitOfMeasure;
         this.defaultProcessingVersion = defaultProcessingVersion;
@@ -130,11 +131,9 @@ public class JdeItemTools {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
-        // Extract correlation ID from MCP _meta and store in context
-        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
-        correlationIdContext.setCorrelationId(clientCorrelationId);
-        log.info("Tool 'jde_search_items' called with correlation ID: {}", correlationIdContext.getCorrelationId());
-        
+        String correlationId = correlationIdContext.extractAndSet(meta);
+        log.info("Tool 'jde_search_items' called with correlation ID: {}", correlationId);
+
         if (itemSearchText == null || itemSearchText.isBlank()) {
             return new ItemSearchResult(ToolStatus.INVALID_REQUEST,
                     "Please provide an item name (or part of it) to search for.", 0, List.of());
@@ -167,7 +166,8 @@ public class JdeItemTools {
                 Duration.ofMinutes(gatewayTimeoutMinutes + 1),
                 defaultPollIntervalMs,
                 Duration.ofSeconds(initialWaitSeconds),
-                () -> soClient.searchItemsWithToken(searchText, token));
+                correlationIdContext.wrapForBackgroundThread(correlationId,
+                        () -> soClient.searchItemsWithToken(searchText, token)));
 
         return switch (task.status()) {
             case WORKING, INPUT_REQUIRED -> new ItemSearchResult(
@@ -285,11 +285,8 @@ public class JdeItemTools {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
-        // Extract correlation ID from MCP _meta and store in context
-        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
-        correlationIdContext.setCorrelationId(clientCorrelationId);
-        log.info("Tool 'jde_get_item_price' called with correlation ID: {}", correlationIdContext.getCorrelationId());
-        
+        log.info("Tool 'jde_get_item_price' called with correlation ID: {}", correlationIdContext.extractAndSet(meta));
+
         int safeItemId = itemId != null ? itemId : 0;
         int safeEntityId = entityId != null ? entityId : 0;
         String safeBusinessUnit = businessUnit != null ? businessUnit : "";
@@ -436,11 +433,9 @@ public class JdeItemTools {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
-        // Extract correlation ID from MCP _meta and store in context
-        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
-        correlationIdContext.setCorrelationId(clientCorrelationId);
-        log.info("Tool 'jde_get_item_list_price' called with correlation ID: {}", correlationIdContext.getCorrelationId());
-        
+        String correlationId = correlationIdContext.extractAndSet(meta);
+        log.info("Tool 'jde_get_item_list_price' called with correlation ID: {}", correlationId);
+
         boolean hasItemId = itemId != null && itemId > 0;
         boolean hasItemCatalog = itemCatalog != null && !itemCatalog.isBlank();
         if (!hasItemId && !hasItemCatalog) {
@@ -479,7 +474,8 @@ public class JdeItemTools {
                 Duration.ofMinutes(gatewayTimeoutMinutes + 1),
                 defaultPollIntervalMs,
                 Duration.ofSeconds(itemListPriceInitialWaitSeconds),
-                () -> soClient.getItemListPriceWithToken(itemId, itemCatalog, businessUnit, currencyCode, unitOfMeasureCode, token));
+                correlationIdContext.wrapForBackgroundThread(correlationId,
+                        () -> soClient.getItemListPriceWithToken(itemId, itemCatalog, businessUnit, currencyCode, unitOfMeasureCode, token)));
 
         return switch (task.status()) {
             case WORKING, INPUT_REQUIRED -> new ItemListPriceResult(

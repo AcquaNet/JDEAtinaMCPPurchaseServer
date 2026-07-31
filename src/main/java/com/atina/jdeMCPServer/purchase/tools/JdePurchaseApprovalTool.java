@@ -134,6 +134,8 @@ public class JdePurchaseApprovalTool {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
+        String correlationId = correlationIdContext.extractAndSet(meta);
+        log.info("Tool 'jde_list_pending_purchase_orders' called with correlation ID: {}", correlationId);
 
         if (!asyncPendingOrdersEnabled) {
             progressNotifications.send(exchange, meta, 0, null,
@@ -154,7 +156,8 @@ public class JdePurchaseApprovalTool {
                 Duration.ofMinutes(gatewayTimeoutMinutes + 1),
                 defaultPollIntervalMs,
                 Duration.ofSeconds(initialWaitSeconds),
-                () -> jdeClient.fetchAllPendingOrdersWithToken(orderTypeCode, businessUnitCode, statusCodeNext, ctx));
+                correlationIdContext.wrapForBackgroundThread(correlationId,
+                        () -> jdeClient.fetchAllPendingOrdersWithToken(orderTypeCode, businessUnitCode, statusCodeNext, ctx)));
 
         return switch (task.status()) {
             case WORKING, INPUT_REQUIRED -> new PendingPurchaseOrdersResult(
@@ -241,11 +244,8 @@ public class JdePurchaseApprovalTool {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
-        // Extract correlation ID from MCP _meta and store in context
-        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
-        correlationIdContext.setCorrelationId(clientCorrelationId);
-        log.info("Tool 'jde_get_purchase_order_detail' called with correlation ID: {}", correlationIdContext.getCorrelationId());
-        
+        log.info("Tool 'jde_get_purchase_order_detail' called with correlation ID: {}", correlationIdContext.extractAndSet(meta));
+
         if (documentOrderTypeCode == null || documentOrderTypeCode.isBlank()
                 || documentOrderInvoiceNumber == null
                 || documentCompanyKeyOrderNo == null || documentCompanyKeyOrderNo.isBlank()
@@ -345,11 +345,8 @@ public class JdePurchaseApprovalTool {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
-        // Extract correlation ID from MCP _meta and store in context
-        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
-        correlationIdContext.setCorrelationId(clientCorrelationId);
-        log.info("Tool 'jde_approve_purchase_order' called with correlation ID: {}", correlationIdContext.getCorrelationId());
-        
+        log.info("Tool 'jde_approve_purchase_order' called with correlation ID: {}", correlationIdContext.extractAndSet(meta));
+
         return processPurchaseOrderInternal(
                 "A",
                 documentOrderTypeCode,
@@ -403,11 +400,8 @@ public class JdePurchaseApprovalTool {
             McpMeta meta,
             McpSyncServerExchange exchange
     ) {
-        // Extract correlation ID from MCP _meta and store in context
-        String clientCorrelationId = meta != null ? (String) meta.get("correlationId") : null;
-        correlationIdContext.setCorrelationId(clientCorrelationId);
-        log.info("Tool 'jde_reject_purchase_order' called with correlation ID: {}", correlationIdContext.getCorrelationId());
-        
+        log.info("Tool 'jde_reject_purchase_order' called with correlation ID: {}", correlationIdContext.extractAndSet(meta));
+
         return processPurchaseOrderInternal(
                 "R",
                 documentOrderTypeCode,

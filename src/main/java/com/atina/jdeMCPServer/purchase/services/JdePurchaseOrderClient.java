@@ -82,7 +82,8 @@ public class JdePurchaseOrderClient {
             @Value("${jde.purchase.default-business-unit-code}") String defaultBusinessUnitCode,
             @Value("${jde.purchase.default-status-code-next}") String defaultStatusCodeNext,
             @Value("${jde.purchase.default-status-approval}") String defaultStatusApproval,
-            @Value("${jde.purchase.p43081-version}") String p43081Version) {
+            @Value("${jde.purchase.p43081-version}") String p43081Version,
+            CorrelationIdContext correlationIdContext) {
 
         this.gatewayWebClient = WebClient.builder().clientConnector(new ReactorClientHttpConnector(
                 HttpClient.create().responseTimeout(Duration.ofMinutes(gatewayTimeoutMinutes))

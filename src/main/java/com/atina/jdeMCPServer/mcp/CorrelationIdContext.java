@@ -2,9 +2,11 @@ package com.atina.jdeMCPServer.mcp;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springaicommunity.mcp.annotation.McpMeta;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * ThreadLocal holder for correlation ID per MCP request.
@@ -58,11 +60,48 @@ public class CorrelationIdContext {
     public void clear() {
         correlationId.remove();
     }
-    
+
+    /**
+     * Extracts _meta.correlationId from an MCP tool call (any JSON type -- not
+     * necessarily a String, since _meta is client-controlled), sets it as the
+     * current correlation ID (or auto-generates one if absent/blank) and
+     * returns the resolved value. Single entry point used by every @McpTool
+     * method instead of reading meta.get(...) directly, so a client sending a
+     * non-string _meta.correlationId can't throw a ClassCastException out of
+     * tool code.
+     */
+    public String extractAndSet(McpMeta meta) {
+        Object raw = meta != null ? meta.get("correlationId") : null;
+        setCorrelationId(raw != null ? raw.toString() : null);
+        return getCorrelationId();
+    }
+
+    /**
+     * Wraps background work submitted to a separate executor (e.g.
+     * LongRunningTaskRegistry's pool) so it runs under the correlation ID
+     * resolved in the original request thread. The registry's Supplier runs
+     * on a pooled thread with no access to this ThreadLocal (or to
+     * RequestContextHolder -- see LongRunningTaskRegistry's javadoc, same
+     * constraint already solved there for the JDE token): the caller must
+     * resolve the correlation ID beforehand, in the request thread, and pass
+     * it in here as plain data. Clears afterwards so a reused pool thread
+     * never leaks one task's correlation ID into the next.
+     */
+    public <T> Supplier<T> wrapForBackgroundThread(String correlationId, Supplier<T> work) {
+        return () -> {
+            setCorrelationId(correlationId);
+            try {
+                return work.get();
+            } finally {
+                clear();
+            }
+        };
+    }
+
     /**
      * Generate auto ID with "auto-" prefix to distinguish from client-supplied.
      * Format: "auto-<UUID>"
-     * 
+     *
      * @return auto-generated correlation ID
      */
     private String generateAutoId() {
