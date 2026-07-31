@@ -582,17 +582,31 @@ public class JdeSalesOrderClient {
 
         String correlationId = correlationIdContext.getCorrelationId();
 
-        return gatewayWebClient.post()
-                .uri(gatewayBaseUrl + "/v1/operations/execute")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
-                .header("Token", "null")
-                .header("TransactionId", gatewayTransactionId)
-                .header("correlationUUID", correlationId)
-                .accept(MediaType.APPLICATION_JSON)
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(body)
-                .retrieve()
-                .toEntity(String.class)
-                .block();
+        try {
+            return gatewayWebClient.post()
+                    .uri(gatewayBaseUrl + "/v1/operations/execute")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                    .header("Token", "null")
+                    .header("TransactionId", gatewayTransactionId)
+                    .header("correlationUUID", correlationId)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(body)
+                    .retrieve()
+                    .toEntity(String.class)
+                    .block();
+        } catch (Exception e) {
+            log.error("Gateway call failed for operation {} -- request sent: {}", operacionKey, describeForLog(value), e);
+            throw e;
+        }
+    }
+
+    /** Serializa el payload para el log de error de {@link #postToGateway}; nunca lanza. */
+    private String describeForLog(Map<String, Object> value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            return String.valueOf(value);
+        }
     }
 }

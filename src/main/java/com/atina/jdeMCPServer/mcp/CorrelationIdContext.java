@@ -2,6 +2,7 @@ package com.atina.jdeMCPServer.mcp;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springaicommunity.mcp.annotation.McpMeta;
 import org.springframework.stereotype.Component;
 
@@ -10,55 +11,67 @@ import java.util.function.Supplier;
 
 /**
  * ThreadLocal holder for correlation ID per MCP request.
- * 
+ *
  * Manages the lifecycle of correlation IDs extracted from MCP tool requests.
  * - Extracts from client-supplied _meta.correlationId (optional)
  * - Auto-generates UUID-based ID if not provided
  * - Accessible to all services/clients executing within the same request thread
+ * - Also mirrored into SLF4J's MDC (key "correlationId") so it shows up on
+ *   every log line via logging.pattern.level (see application.properties) --
+ *   MDC is itself thread-bound, so it follows the exact same lifecycle
+ *   (set/clear) as the ThreadLocal below, including across
+ *   wrapForBackgroundThread's pooled threads.
  * - Should be cleared after request completes (via CorrelationIdFilter)
  */
 @Component
 public class CorrelationIdContext {
-    
+
     private static final Logger log = LoggerFactory.getLogger(CorrelationIdContext.class);
+    private static final String MDC_KEY = "correlationId";
     private static final ThreadLocal<String> correlationId = new ThreadLocal<>();
-    
+
     /**
      * Set correlation ID from MCP request _meta.
      * If id is null or blank, generates UUID-based ID: "auto-<UUID>".
-     * 
+     *
      * @param id correlation ID from client (may be null)
      */
     public void setCorrelationId(String id) {
         String finalId = (id != null && !id.isBlank()) ? id : generateAutoId();
-        correlationId.set(finalId);
+        apply(finalId);
         log.debug("Correlation ID set: {}", finalId);
     }
-    
+
     /**
      * Get current correlation ID.
      * Never returns null — auto-generates if not previously set.
      * This ensures every request has a correlation ID for Gateway tracing.
-     * 
+     *
      * @return current correlation ID (never null)
      */
     public String getCorrelationId() {
         String id = correlationId.get();
         if (id == null) {
             String autoId = generateAutoId();
-            correlationId.set(autoId);
+            apply(autoId);
             log.debug("Auto-generated correlation ID: {}", autoId);
             return autoId;
         }
         return id;
     }
-    
+
     /**
      * Clear correlation ID when request ends.
      * Should be called from CorrelationIdFilter.doFilter() finally block.
      */
     public void clear() {
         correlationId.remove();
+        MDC.remove(MDC_KEY);
+    }
+
+    private void apply(String id) {
+        correlationId.set(id);
+        MDC.put(MDC_KEY, id);
     }
 
     /**
