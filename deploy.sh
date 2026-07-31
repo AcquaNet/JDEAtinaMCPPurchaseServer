@@ -16,8 +16,10 @@ usage() {
     echo "  $0 [local|server]"
     echo
     echo "Modos:"
-    echo "  local   Compila e inicia el contenedor localmente. Es el valor predeterminado."
-    echo "  server  Construye y publica la imagen usando multiarch-builder."
+    echo "  local   Configura el puerto 8080, compila e inicia el contenedor localmente."
+    echo "          Es el valor predeterminado."
+    echo "  server  Compila, construye y publica la imagen usando multiarch-builder."
+    echo "          No modifica ni valida server.port."
 }
 
 case "$DEPLOY_MODE" in
@@ -51,15 +53,23 @@ fi
 echo
 echo "1. Actualizando application.properties..."
 
-if ! grep -qE '^[[:space:]]*server\.port=' "$PROPERTIES_FILE"; then
-    echo "ERROR: No se encontró la propiedad server.port en:"
-    echo "  $PROPERTIES_FILE"
-    exit 1
-fi
+# El puerto solo se valida y configura en modo local.
+if [[ "$DEPLOY_MODE" == "local" ]]; then
+    if ! grep -qE '^[[:space:]]*server\.port=' "$PROPERTIES_FILE"; then
+        echo "ERROR: No se encontró la propiedad server.port en:"
+        echo "  $PROPERTIES_FILE"
+        exit 1
+    fi
 
-sed -i '' -E \
-    's/^[[:space:]]*server\.port=.*/server.port=8070/' \
-    "$PROPERTIES_FILE"
+    sed -i '' -E \
+        's/^[[:space:]]*server\.port=.*/server.port=8080/' \
+        "$PROPERTIES_FILE"
+
+    echo "Puerto local configurado:"
+    grep -E '^[[:space:]]*server\.port=' "$PROPERTIES_FILE"
+else
+    echo "Modo server: no se valida ni modifica server.port."
+fi
 
 VERSION_LINE="$(
     grep -E '^[[:space:]]*mcp\.ai\.mcp\.server\.version=' "$PROPERTIES_FILE" |
@@ -92,16 +102,15 @@ SUFFIX_LENGTH="${#VERSION_SUFFIX}"
 
 NEXT_SUFFIX=$((10#$VERSION_SUFFIX + 1))
 
-printf -v FORMATTED_SUFFIX "%0${SUFFIX_LENGTH}d" "$NEXT_SUFFIX"
+printf -v FORMATTED_SUFFIX \
+    "%0${SUFFIX_LENGTH}d" \
+    "$NEXT_SUFFIX"
 
 NEW_VERSION="${VERSION_PREFIX}-${FORMATTED_SUFFIX}"
 
 sed -i '' -E \
     "s|^[[:space:]]*mcp\.ai\.mcp\.server\.version=.*|mcp.ai.mcp.server.version=${NEW_VERSION}|" \
     "$PROPERTIES_FILE"
-
-echo "Puerto configurado:"
-grep -E '^server\.port=' "$PROPERTIES_FILE"
 
 echo "Versión anterior: $CURRENT_VERSION"
 echo "Versión nueva:    $NEW_VERSION"
@@ -134,7 +143,7 @@ echo
 echo "4. Ejecutando Docker en modo $DEPLOY_MODE..."
 
 if [[ "$DEPLOY_MODE" == "server" ]]; then
-    echo "Imagen: $MCP_IMAGE"
+    echo "Imagen:  $MCP_IMAGE"
     echo "Builder: multiarch-builder"
     echo
 
@@ -163,8 +172,11 @@ echo
 echo "========================================"
 echo "Proceso completado correctamente"
 echo "Modo:    $DEPLOY_MODE"
-echo "Puerto:  8070"
 echo "Versión: $NEW_VERSION"
+
+if [[ "$DEPLOY_MODE" == "local" ]]; then
+    echo "Puerto:  8080"
+fi
 
 if [[ "$DEPLOY_MODE" == "server" ]]; then
     echo "Imagen:  $MCP_IMAGE"
