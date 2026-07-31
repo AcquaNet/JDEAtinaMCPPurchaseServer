@@ -34,9 +34,14 @@ public class CorrelationIdFilter implements Filter {
         try {
             chain.doFilter(request, response);
         } finally {
-            String id = correlationIdContext.getCorrelationId();
+            // peekCorrelationId (no side effect) -- most requests to /mcp are MCP
+            // protocol housekeeping (tools/list, initialize, pings) that never run a
+            // tool and never need one; only log/clear when one was actually set.
+            String id = correlationIdContext.peekCorrelationId();
             correlationIdContext.clear();
-            log.debug("Cleared correlation ID after request: {}", id);
+            if (id != null) {
+                log.debug("Cleared correlation ID after request: {}", id);
+            }
         }
     }
 }

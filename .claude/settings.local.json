@@ -130,7 +130,11 @@
       "Bash(TEST_USERNAME=jgodino TEST_PASSWORD='Jde.Mcp2026' ./scripts/validate-local.sh *)",
       "Bash(awk -F'ipAddress=\"' '{print $2}')",
       "Bash(awk -F'\"' '{print $1}')",
-      "Bash(grep *)"
+      "Bash(grep *)",
+      "Bash(break)",
+      "Bash(awk '{print $2}')",
+      "Bash(pkill -f \"spring-boot:run\")",
+      "Bash(pkill -f \"server.port=8091\")"
     ]
   }
 }

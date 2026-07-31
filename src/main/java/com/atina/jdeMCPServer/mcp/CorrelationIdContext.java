@@ -61,6 +61,19 @@ public class CorrelationIdContext {
     }
 
     /**
+     * Current correlation ID if one was actually set during this request (by
+     * a tool's extractAndSet or a background task's wrapForBackgroundThread),
+     * without the auto-generation side effect of getCorrelationId() -- used
+     * by CorrelationIdFilter to avoid minting and logging an ID for requests
+     * that never needed one (tools/list, initialize, pings, etc.).
+     *
+     * @return current correlation ID, or null if none was set
+     */
+    public String peekCorrelationId() {
+        return correlationId.get();
+    }
+
+    /**
      * Clear correlation ID when request ends.
      * Should be called from CorrelationIdFilter.doFilter() finally block.
      */
