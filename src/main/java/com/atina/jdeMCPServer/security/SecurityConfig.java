@@ -68,6 +68,10 @@ public class SecurityConfig {
                 .requestMatchers("/.well-known/**").permitAll()
                 // Endpoint MCP real: spring.ai.mcp.server.streamable-http.mcp-endpoint=/mcp
                 .requestMatchers("/mcp", "/mcp/**").authenticated()
+                // Busqueda de logs por correlation ID (LogSearchController) -- puede
+                // exponer datos de negocio (ver el log de error de postToGateway), no
+                // puede caer en el catch-all permitAll() de abajo.
+                .requestMatchers("/admin/logs", "/admin/logs/**").authenticated()
                 .anyRequest().permitAll()
             )
             // Entry point custom en ambos hooks: el del resource server cubre los 401
