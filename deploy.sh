@@ -175,7 +175,8 @@ echo "4. Construyendo e iniciando el contenedor..."
 echo "Puerto de la aplicación: $SERVER_PORT"
 
 MCP_IMAGE="$MCP_IMAGE" \
-SERVER_PORT="$SERVER_PORT" \
+MCP_SERVER_PORT="$SERVER_PORT" \
+SPRING_PROFILES_ACTIVE="$SPRING_PROFILE" \
 docker compose \
     --profile dev \
     up \
@@ -186,7 +187,8 @@ echo
 echo "5. Estado de los contenedores..."
 
 MCP_IMAGE="$MCP_IMAGE" \
-SERVER_PORT="$SERVER_PORT" \
+MCP_SERVER_PORT="$SERVER_PORT" \
+SPRING_PROFILES_ACTIVE="$SPRING_PROFILE" \
 docker compose \
     --profile dev \
     ps
@@ -203,7 +205,8 @@ if [[ "$DEPLOY_MODE" == "server" ]]; then
     echo
 
     MCP_IMAGE="$MCP_IMAGE" \
-    SERVER_PORT="$SERVER_PORT" \
+    MCP_SERVER_PORT="$SERVER_PORT" \
+    SPRING_PROFILES_ACTIVE="$SPRING_PROFILE" \
     docker compose \
         --profile dev \
         build \

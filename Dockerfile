@@ -28,7 +28,10 @@ RUN mkdir -p /app/data && chown -R jdemcp:jdemcp /app
 USER jdemcp
 EXPOSE 8080
 
+# MCP_SERVER_PORT (ver docker-compose.yml) resuelve al mismo puerto que
+# server.port dentro del contenedor -- fallback 8080 solo para correr esta
+# imagen fuera de docker-compose (donde esa variable no llega).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD curl -sf http://127.0.0.1:8080/.well-known/oauth-protected-resource || exit 1
+    CMD curl -sf http://127.0.0.1:${MCP_SERVER_PORT:-8080}/.well-known/oauth-protected-resource || exit 1
 
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
