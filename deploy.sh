@@ -4,9 +4,12 @@ set -euo pipefail
 
 PROJECT_DIR="/Users/franciscogodinoconte/_IA/SpringIAProjects/JDEAtinaMCPPurchaseServer"
 PROPERTIES_FILE="$PROJECT_DIR/src/main/resources/application.properties"
+DEV_PROPERTIES_FILE="$PROJECT_DIR/src/main/resources/application-dev.properties"
+LOCAL_PROPERTIES_FILE="$PROJECT_DIR/src/main/resources/application-local.properties"
 DOCKER_DIR="$PROJECT_DIR/docker"
 
 DEPLOY_MODE="${1:-local}"
+
 MCP_IMAGE_NAME="92455890/jde-mcp-server"
 MCP_IMAGE_VERSION="1.0.0"
 MCP_IMAGE="${MCP_IMAGE_NAME}:${MCP_IMAGE_VERSION}"
@@ -16,14 +19,24 @@ usage() {
     echo "  $0 [local|server]"
     echo
     echo "Modos:"
-    echo "  local   Configura el puerto 8080, compila e inicia el contenedor localmente."
-    echo "          Es el valor predeterminado."
-    echo "  server  Compila, construye y publica la imagen usando multiarch-builder."
-    echo "          No modifica ni valida server.port."
+    echo "  local   Configura el puerto 8080, compila, construye e inicia"
+    echo "          el contenedor localmente."
+    echo
+    echo "  server  Configura el puerto 8070, compila, construye e inicia"
+    echo "          el contenedor y publica la imagen Docker"
+    echo "          usando multiarch-builder."
 }
 
 case "$DEPLOY_MODE" in
-    local|server)
+    local)
+        SERVER_PORT="8080"
+        PORT_PROPERTIES_FILE="$LOCAL_PROPERTIES_FILE"
+        SPRING_PROFILE="local"
+        ;;
+    server)
+        SERVER_PORT="8070"
+        PORT_PROPERTIES_FILE="$DEV_PROPERTIES_FILE"
+        SPRING_PROFILE="dev"
         ;;
     -h|--help)
         usage
@@ -40,7 +53,9 @@ esac
 echo "========================================"
 echo "JDE Atina MCP Purchase Server deployment"
 echo "========================================"
-echo "Modo: $DEPLOY_MODE"
+echo "Modo:   $DEPLOY_MODE"
+echo "Puerto: $SERVER_PORT"
+echo "Profile: $SPRING_PROFILE"
 
 cd "$PROJECT_DIR"
 
@@ -50,27 +65,42 @@ if [[ ! -f "$PROPERTIES_FILE" ]]; then
     exit 1
 fi
 
-echo
-echo "1. Actualizando application.properties..."
-
-# El puerto solo se valida y configura en modo local.
-if [[ "$DEPLOY_MODE" == "local" ]]; then
-    if ! grep -qE '^[[:space:]]*server\.port=' "$PROPERTIES_FILE"; then
-        echo "ERROR: No se encontró la propiedad server.port en:"
-        echo "  $PROPERTIES_FILE"
-        exit 1
-    fi
-
-    sed -i '' -E \
-        's/^[[:space:]]*server\.port=.*/server.port=8080/' \
-        "$PROPERTIES_FILE"
-
-    echo "Puerto local configurado:"
-    grep -E '^[[:space:]]*server\.port=' "$PROPERTIES_FILE"
-else
-    echo "Modo server: no se valida ni modifica server.port."
+if [[ ! -f "$PORT_PROPERTIES_FILE" ]]; then
+    echo "ERROR: No se encontró el archivo del profile $SPRING_PROFILE:"
+    echo "  $PORT_PROPERTIES_FILE"
+    exit 1
 fi
 
+echo
+echo "1. Actualizando configuración..."
+
+#
+# Puerto según el profile utilizado:
+#
+#   local  -> application-local.properties -> 8080
+#   server -> application-dev.properties   -> 8070
+#
+if ! grep -qE '^[[:space:]]*server\.port=' "$PORT_PROPERTIES_FILE"; then
+    echo "ERROR: No se encontró la propiedad server.port en:"
+    echo "  $PORT_PROPERTIES_FILE"
+    exit 1
+fi
+
+sed -i '' -E \
+    "s/^[[:space:]]*server\.port=.*/server.port=${SERVER_PORT}/" \
+    "$PORT_PROPERTIES_FILE"
+
+echo "Profile configurado: $SPRING_PROFILE"
+echo "Archivo actualizado:  $PORT_PROPERTIES_FILE"
+echo "Puerto configurado:"
+grep -E '^[[:space:]]*server\.port=' "$PORT_PROPERTIES_FILE"
+
+#
+# Incremento de la versión interna del MCP Server.
+#
+# Ejemplo:
+#   1.0.1-01 -> 1.0.1-02
+#
 VERSION_LINE="$(
     grep -E '^[[:space:]]*mcp\.ai\.mcp\.server\.version=' "$PROPERTIES_FILE" |
     head -n 1
@@ -117,6 +147,7 @@ echo "Versión nueva:    $NEW_VERSION"
 
 echo
 echo "2. Ejecutando Maven..."
+
 mvn clean install
 
 echo
@@ -140,14 +171,39 @@ if [[ ! -f "docker-compose.yml" &&
 fi
 
 echo
-echo "4. Ejecutando Docker en modo $DEPLOY_MODE..."
+echo "4. Construyendo e iniciando el contenedor..."
+echo "Puerto de la aplicación: $SERVER_PORT"
 
+MCP_IMAGE="$MCP_IMAGE" \
+SERVER_PORT="$SERVER_PORT" \
+docker compose \
+    --profile dev \
+    up \
+    -d \
+    --build
+
+echo
+echo "5. Estado de los contenedores..."
+
+MCP_IMAGE="$MCP_IMAGE" \
+SERVER_PORT="$SERVER_PORT" \
+docker compose \
+    --profile dev \
+    ps
+
+#
+# En modo server se publica la imagen multiarquitectura.
+#
 if [[ "$DEPLOY_MODE" == "server" ]]; then
+    echo
+    echo "6. Construyendo y publicando la imagen multiarquitectura..."
     echo "Imagen:  $MCP_IMAGE"
     echo "Builder: multiarch-builder"
+    echo "Puerto:  $SERVER_PORT"
     echo
 
     MCP_IMAGE="$MCP_IMAGE" \
+    SERVER_PORT="$SERVER_PORT" \
     docker compose \
         --profile dev \
         build \
@@ -157,15 +213,6 @@ if [[ "$DEPLOY_MODE" == "server" ]]; then
     echo
     echo "Imagen publicada correctamente:"
     echo "  $MCP_IMAGE"
-else
-    docker compose \
-        --profile dev \
-        up \
-        -d \
-        --build
-
-    echo
-    docker compose --profile dev ps
 fi
 
 echo
@@ -173,10 +220,8 @@ echo "========================================"
 echo "Proceso completado correctamente"
 echo "Modo:    $DEPLOY_MODE"
 echo "Versión: $NEW_VERSION"
-
-if [[ "$DEPLOY_MODE" == "local" ]]; then
-    echo "Puerto:  8080"
-fi
+echo "Puerto:  $SERVER_PORT"
+echo "Profile: $SPRING_PROFILE"
 
 if [[ "$DEPLOY_MODE" == "server" ]]; then
     echo "Imagen:  $MCP_IMAGE"

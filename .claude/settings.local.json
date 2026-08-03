@@ -134,7 +134,8 @@
       "Bash(break)",
       "Bash(awk '{print $2}')",
       "Bash(pkill -f \"spring-boot:run\")",
-      "Bash(pkill -f \"server.port=8091\")"
+      "Bash(pkill -f \"server.port=8091\")",
+      "Bash(echo \"---exit: $? \\(no output = not found\\)---\")"
     ]
   }
 }
