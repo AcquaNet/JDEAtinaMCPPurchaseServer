@@ -21,9 +21,13 @@ RUN groupadd --system jdemcp && useradd --system --gid jdemcp --home /app --shel
 
 COPY --from=build /app/target/*.jar /app/app.jar
 
-# ./data es donde vive el H2 file DB (identity_mapping), ver spring.datasource.url
-# por perfil -- se monta como volumen en docker-compose para persistir entre reinicios.
-RUN mkdir -p /app/data && chown -R jdemcp:jdemcp /app
+# ./data (H2 file DB, identity_mapping) y ./logs (logging.file.name) se montan
+# como volumenes en docker-compose para persistir entre reinicios -- hay que
+# crearlos y darles dueno ACA, antes del volumen: un named volume nuevo (recien
+# creado) copia el contenido/permisos de la imagen en este path la primera vez
+# que se monta, pero si el directorio no existe en la imagen, Docker lo crea el
+# solo como root al montarlo, y jdemcp (USER de abajo) no puede escribir ahi.
+RUN mkdir -p /app/data /app/logs && chown -R jdemcp:jdemcp /app
 
 USER jdemcp
 EXPOSE 8080
