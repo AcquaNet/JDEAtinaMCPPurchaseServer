@@ -135,7 +135,10 @@
       "Bash(awk '{print $2}')",
       "Bash(pkill -f \"spring-boot:run\")",
       "Bash(pkill -f \"server.port=8091\")",
-      "Bash(echo \"---exit: $? \\(no output = not found\\)---\")"
+      "Bash(echo \"---exit: $? \\(no output = not found\\)---\")",
+      "Bash(bash -n /Users/franciscogodinoconte/_IA/SpringIAProjects/JDEAtinaMCPPurchaseServer/deploy.sh)",
+      "Bash(MCP_IMAGE=jde-mcp-server:latest MCP_SERVER_PORT=8080 SPRING_PROFILES_ACTIVE=local docker compose --profile dev config)",
+      "Bash(MCP_IMAGE=jde-mcp-server:latest MCP_SERVER_PORT=8070 SPRING_PROFILES_ACTIVE=dev docker compose --profile dev config)"
     ]
   }
 }
