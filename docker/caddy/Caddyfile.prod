@@ -5,7 +5,7 @@
 # caddy_data entre reinicios del contenedor.
 
 jdemcp-atina-connection.com {
-	reverse_proxy mcp-server:8080
+	reverse_proxy mcp-server:8070
 }
 
 auth.jdemcp-atina-connection.com {
