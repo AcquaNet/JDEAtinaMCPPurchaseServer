@@ -304,7 +304,7 @@ public class JdeSalesOrderClient {
 
     private static Map<String, Object> itemSearchValue(String itemSearchText) {
         Map<String, Object> value = new LinkedHashMap<>();
-        value.put("itemSearchText", itemSearchText);
+        value.put("itemDescription1", itemSearchText);
         return value;
     }
 
