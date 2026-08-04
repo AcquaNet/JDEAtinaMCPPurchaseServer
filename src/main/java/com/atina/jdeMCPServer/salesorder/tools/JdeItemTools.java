@@ -202,89 +202,304 @@ public class JdeItemTools {
     @McpTool(
             name = "jde_get_item_price",
             description = """
-            Get the price of a JDE item for a specific customer, optionally including warehouse
-            stock availability.
+        Get the price of a JDE item for a specific customer, optionally including stock
+        availability.
 
-            PURPOSE:
-            - Returns the unit price and extended price (unit price x quantity) of an item for a
-              given customer, business unit (warehouse) and quantity. When availability is
-              requested, it also returns stock availability broken down by warehouse.
+        PURPOSE:
+        - Returns the customer-specific price of a product.
+        - The price may depend on the customer, warehouse, quantity, currency and unit of measure.
+        - When warehouse or unit of measure is not specified, the tool may return multiple price
+          results.
+        - When availability is requested, it also returns stock availability by warehouse.
 
-            WHEN TO USE:
-            - The user wants to know the price of an article for a customer, with or without
-              availability.
-            - Before calling this tool you need:
-                • entityId: the customer's AB Number. If you only have a name, resolve it first
-                  with jde_lookup_customer_by_name.
-                • itemId and/or itemCatalog: the item's JDE identifiers. If you only have a
-                  description, resolve it first with jde_search_items.
-                • currencyCode: the customer's currency. If unknown, resolve it with
-                  jde_get_customer_detail (field invoice.currencyCode / currencyCodeTransaction).
+        REQUIRED CUSTOMER IDENTIFICATION:
+        - A customer must be identified before calling this tool.
+        - entityId is the customer's JDE Address Book Number.
+        - If the user provides only a customer name, call jde_lookup_customer_by_name first.
+        - If the customer search returns multiple matches, do not select one automatically. Ask the
+          user which customer they mean.
 
-            INPUT:
-            - entityId: customer AB Number, e.g. 4242. Required.
-            - businessUnit: JDE business unit / warehouse code, e.g. "10". Required — always ask
-              the user which warehouse if not provided. Sent to JDE exactly as given, with no
-              reformatting.
-            - itemId: JDE item id, from jde_search_items, e.g. 60011.
-            - itemCatalog: JDE item catalog number/code (alternative identifier for the same item),
-              e.g. '210'.
-              At least ONE of itemId / itemCatalog is required; if both are known, send both.
-            - currencyCode: customer's currency code, e.g. "USD". Required.
-            - quantity: quantity requested, e.g. 2. Required.
-            - unitOfMeasure: unit of measure code, e.g. "EA". Optional — if not provided, a server
-              default is used.
-            - processingVersion: JDE processing version, e.g. "ZJDE0001". Optional — if not
-              provided, a server default is used.
-            - returnAvailability: "Y" to also return warehouse stock availability, "N" for price
-              only. Optional, defaults to "N".
+        REQUIRED PRODUCT IDENTIFICATION:
+        - A product code must be available before calling this tool.
+        - The product may be identified by:
+          - itemCatalog: the external or catalog product code, or
+          - itemId: the internal numeric JDE item identifier.
+        - itemCatalog is the preferred identifier.
+        - itemId is the fallback identifier.
+        - Never assume that a numeric product reference is necessarily an itemId.
+        - itemCatalog may be numeric, alphabetic or alphanumeric.
 
-            OUTPUT (structured JSON, see outputSchema):
-            - status "OK": unitPrice / extendedPrice / currencyCode are always populated.
-              availability[] (warehouseCode, warehouseName, quantityAvailable) is populated only
-              when returnAvailability = "Y" was requested; otherwise it is an empty array.
-            - status "INVALID_REQUEST": message explains which required input is missing/invalid.
-            - status "FAILED": message explains the error; retrying is safe.
+        HOW TO INTERPRET THE USER'S PRODUCT INPUT:
+        - If the user provides a product reference containing MORE THAN ONE WORD, treat it as a
+          product description.
+          Example: "Mountain Bike Red".
+        - For a multi-word product description, call jde_search_items first to resolve it into an
+          itemCatalog and, when available, an itemId.
+        - If jde_search_items returns exactly one product, use its itemCatalog. Also include itemId
+          when it is available.
+        - If jde_search_items returns multiple products, do not assume the first result. Present
+          the matching products and ask the user which one they mean.
+        - If the user provides a SINGLE value, treat it first as itemCatalog, regardless of whether
+          it contains numbers, letters or both.
+        - Do not classify a single value as a description merely because it contains letters.
+          A value such as "BIKE210" may be a valid itemCatalog.
+        - If querying with itemCatalog returns no matching product or no price, retry using the same
+          value as itemId only when the value can be represented as a valid numeric itemId.
+        - Never invent, modify, normalize or partially match a product code.
 
-            IMPORTANT FOR THE ASSISTANT:
-            - Never invent entityId, itemId, itemCatalog, businessUnit or currencyCode. Resolve them
-              via the other tools first and confirm with the user if ambiguous.
-            - If the user did not say whether they want availability, ask them (Y/N) before
-              calling this tool, unless the context makes it obvious.
-            - Always state the currency alongside any price shown.
-            """,
+        PRODUCT IDENTIFIER SEARCH ORDER:
+        1. Use the supplied value as itemCatalog.
+        2. If no result is returned, retry as itemId when the value is a valid numeric itemId.
+        3. If jde_search_items returned both itemCatalog and itemId, send both identifiers.
+        4. Do not repeatedly alternate between itemCatalog and itemId or create an infinite retry
+           loop.
+
+        CUSTOMER CURRENCY:
+        - currencyCode is optional for the user.
+        - If the user provides a currency, use it exactly as provided.
+        - If the user does not provide a currency, call jde_get_customer_detail using entityId.
+        - Use invoice.currencyCodeTransaction from jde_get_customer_detail as currencyCode.
+        - Do not use another customer currency field when invoice.currencyCodeTransaction is
+          available.
+        - Never invent or assume a currency.
+        - If invoice.currencyCodeTransaction is empty or unavailable, ask the user which currency
+          should be used.
+
+        WHEN TO USE:
+        - The user asks for the price of a product for a specific customer.
+        - The user asks for a negotiated, customer-specific or quantity-dependent price.
+        - The user asks for a customer-specific price with or without stock availability.
+
+        WHEN NOT TO USE:
+        - The user asks only for the standard, base, catalog or list price without a customer.
+          Use jde_get_item_list_price instead.
+        - The customer has not been identified.
+        - The product has not been identified.
+        - The product input is a multi-word description that has not yet been resolved with
+          jde_search_items.
+
+        INPUT:
+        - entityId:
+          Customer JDE Address Book Number.
+          Required.
+          Example: 4242.
+
+        - itemCatalog:
+          JDE product catalog number or code.
+          Preferred product identifier.
+          It may be numeric, alphabetic or alphanumeric.
+          Examples: "210", "BIKE-RED", "ABC123".
+
+        - itemId:
+          Internal numeric JDE item identifier.
+          Use as a fallback when itemCatalog does not return a result, or include it when another
+          tool has already returned it.
+          Example: 60011.
+
+        - At least one of itemCatalog or itemId is required.
+        - When both were returned by jde_search_items, send both.
+        - For a single user-provided product reference, try itemCatalog before itemId.
+
+        - businessUnit:
+          Optional JDE business unit or warehouse code.
+          Example: "10".
+          Send it to JDE exactly as provided, without trimming, padding or reformatting.
+          If provided, return the price for that warehouse.
+          If omitted, return prices for all warehouses or business units available for the
+          customer and product.
+          Do not ask the user for a warehouse merely because it was omitted.
+
+        - quantity:
+          Quantity requested.
+          Required.
+          Example: 2.
+          Do not assume quantity 1 unless that behavior is explicitly defined by the application.
+
+        - unitOfMeasure:
+          Optional unit-of-measure code.
+          Example: "EA".
+          If provided, return the price for that unit of measure.
+          If omitted, return prices for all available units of measure.
+          Do not silently apply a server default when multiple units are available.
+
+        - currencyCode:
+          Optional in the user's request.
+          Example: "USD".
+          If omitted, resolve it with jde_get_customer_detail and use
+          invoice.currencyCodeTransaction.
+
+        - processingVersion:
+          Optional JDE processing version.
+          Example: "ZJDE0001".
+          If omitted, the server default is used.
+
+        - returnAvailability:
+          Optional.
+          Use "Y" when the user explicitly requests stock, inventory or availability.
+          Use "N" when the user asks only for price.
+          Defaults to "N".
+          Do not ask the user whether availability is needed when they only requested a price.
+
+        REQUIRED TOOL SEQUENCE:
+        1. Resolve the customer entityId when only a customer name is known.
+        2. Resolve a multi-word product description using jde_search_items.
+        3. Resolve currencyCode using jde_get_customer_detail when the user did not provide one.
+        4. Call this tool using itemCatalog first.
+        5. If itemCatalog returns no result, retry using itemId when a valid itemId is available.
+
+        OUTPUT (structured JSON, see outputSchema):
+        - status "IN_PROGRESS":
+          The query is still running against JDE.
+          This is not an error.
+          Call jde_get_item_price again using the exact same arguments after pollAfterSeconds.
+          Do not report the operation as failed to the user.
+
+        - status "OK":
+          The response contains one or more customer-specific price results.
+
+          When businessUnit was omitted, the response may contain one price per warehouse.
+
+          When unitOfMeasure was omitted, the response may contain one price per available unit of
+          measure.
+
+          Each price result should include:
+          - businessUnit
+          - warehouseName, when available
+          - itemId
+          - itemCatalog
+          - itemDescription
+          - quantity
+          - unitOfMeasure
+          - unitPrice
+          - extendedPrice
+          - currencyCode
+          - dateEffective
+          - dateExpiration
+
+          availability[] is populated only when returnAvailability = "Y".
+          Each availability entry may include:
+          - warehouseCode
+          - warehouseName
+          - quantityAvailable
+          - unitOfMeasure
+
+        - status "INVALID_REQUEST":
+          The message explains which required input is missing or invalid.
+
+        - status "FAILED":
+          The message explains the error.
+          Retry only when appropriate and avoid infinite retries.
+
+        IMPORTANT FOR THE ASSISTANT:
+        - Never invent entityId, itemId, itemCatalog, businessUnit, currencyCode, quantity or
+          unitOfMeasure.
+        - Always identify the customer for whom the price was calculated.
+        - Always tell the user which product code was used.
+        - Prefer itemCatalog as the user-facing product code.
+        - Include itemId as the internal JDE identifier when available.
+        - Present multiple price results as a Markdown table.
+        - Use one row per warehouse and unit-of-measure combination returned by JDE.
+        - Recommended columns:
+          Product Code | Item ID | Description | Warehouse | Quantity | Unit | Unit Price |
+          Extended Price | Currency
+        - Always show the currency alongside every price.
+        - Never combine prices belonging to different warehouses, units or currencies.
+        - If businessUnit was omitted, explain that prices are shown for all available warehouses.
+        - If unitOfMeasure was omitted, explain that prices are shown for all available units.
+        - If currencyCode was resolved from the customer, explain that the customer's transaction
+          currency was used.
+        - When returnAvailability is "Y", present availability separately from pricing.
+        - When returnAvailability is "N" or was omitted, answer the price request directly and then
+          optionally suggest that the user can also request stock availability.
+        """
+            ,
             generateOutputSchema = true
     )
     public ItemPriceResult getItemPrice(
-            @McpToolParam(description = "Customer AB Number (entityId), from jde_lookup_customer_by_name, e.g. 4242.")
-            Integer entityId,
-            @McpToolParam(description = "JDE business unit / warehouse code, e.g. '10'. Sent to JDE exactly as given.")
-            String businessUnit,
             @McpToolParam(
-                    description = "JDE item id, from jde_search_items, e.g. 60011. "
-                            + "At least one of itemId / itemCatalog is required.",
+                    description = """
+                Customer JDE Address Book Number. Resolve it with
+                jde_lookup_customer_by_name when only the customer name is known.
+                """)
+            Integer entityId,
+
+            @McpToolParam(
+                    description = """
+                Optional JDE business unit or warehouse code, e.g. "10".
+                Send exactly as provided, without reformatting.
+                If omitted, return prices for all available warehouses.
+                """,
+                    required = false
+            )
+            String businessUnit,
+
+            @McpToolParam(
+                    description = """
+                Internal numeric JDE item identifier, e.g. 60011.
+                At least one of itemId or itemCatalog is required.
+                Use itemId as fallback when itemCatalog returns no result.
+                """,
                     required = false
             )
             Integer itemId,
+
             @McpToolParam(
-                    description = "JDE item catalog number/code, e.g. '210' -- alternative identifier for "
-                            + "the same item. At least one of itemId / itemCatalog is required.",
+                    description = """
+                Preferred JDE catalog product code, e.g. "210", "BIKE-RED" or "ABC123".
+                It may be numeric, alphabetic or alphanumeric.
+                At least one of itemCatalog or itemId is required.
+                For a single user-provided product reference, try this parameter first.
+                """,
                     required = false
             )
             String itemCatalog,
-            @McpToolParam(description = "Customer currency code, e.g. 'USD'.")
+
+            @McpToolParam(
+                    description = """
+                Optional transaction currency code, e.g. "USD".
+                If the user did not provide it, resolve it using jde_get_customer_detail and use
+                invoice.currencyCodeTransaction.
+                """,
+                    required = false
+            )
             String currencyCode,
-            @McpToolParam(description = "Quantity requested, e.g. 2.")
+
+            @McpToolParam(
+                    description = "Quantity requested, e.g. 2. Required."
+            )
             Double quantity,
-            @McpToolParam(description = "Unit of measure code, e.g. 'EA'. Optional; if omitted, a server default is used.")
+
+            @McpToolParam(
+                    description = """
+                Optional unit-of-measure code, e.g. "EA".
+                If omitted, return prices for all available units of measure.
+                """,
+                    required = false
+            )
             String unitOfMeasure,
-            @McpToolParam(description = "JDE processing version, e.g. 'ZJDE0001'. Optional; if omitted, a server default is used.")
+
+            @McpToolParam(
+                    description = """
+                Optional JDE processing version, e.g. "ZJDE0001".
+                If omitted, the configured server default is used.
+                """,
+                    required = false
+            )
             String processingVersion,
-            @McpToolParam(description = "'Y' to also return warehouse availability, 'N' for price only. Optional, defaults to 'N'.")
+
+            @McpToolParam(
+                    description = """
+                Use "Y" to include stock availability and "N" for price only.
+                Optional and defaults to "N".
+                Do not ask about availability when the user requested only a price.
+                """,
+                    required = false
+            )
             String returnAvailability,
+
             McpMeta meta,
             McpSyncServerExchange exchange
-    ) {
+    ){
         log.info("Tool 'jde_get_item_price' called with correlation ID: {}", correlationIdContext.extractAndSet(meta));
 
         int safeItemId = itemId != null ? itemId : 0;
