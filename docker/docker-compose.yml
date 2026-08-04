@@ -157,7 +157,7 @@ services:
       # Mismo valor a ambos lados: MCP_SERVER_PORT es tambien el server.port real
       # adentro del contenedor (ver application-{perfil}.properties) -- un lado fijo
       # en 8080 rompia el mapeo apenas el perfil activo escuchaba en otro puerto.
-      - "127.0.0.1:${MCP_SERVER_PORT:-8080}:${MCP_SERVER_PORT:-8080}"
+      - "127.0.0.1:${MCP_SERVER_PORT_IN:-8080}:${MCP_SERVER_PORT:-8070}"
     volumes:
       - mcp_server_data:/app/data
       # logging.file.name=./logs/... (ver application.properties) resuelve a

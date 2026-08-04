@@ -29,7 +29,7 @@ usage() {
 
 case "$DEPLOY_MODE" in
     local)
-        SERVER_PORT="8080"
+        SERVER_PORT="8070"
         PORT_PROPERTIES_FILE="$LOCAL_PROPERTIES_FILE"
         SPRING_PROFILE="local"
         ;;
