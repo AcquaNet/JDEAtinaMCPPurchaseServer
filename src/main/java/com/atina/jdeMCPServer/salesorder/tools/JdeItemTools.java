@@ -359,52 +359,153 @@ public class JdeItemTools {
     @McpTool(
             name = "jde_get_item_list_price",
             description = """
-            Get the JDE list (base) price of an item -- the standard catalog price, NOT tied to any
-            specific customer.
+        Get the JDE base/list price of an item. This is the standard catalog price and is NOT
+        customer-specific.
 
-            PURPOSE:
-            - Returns the list price(s) of an item, optionally filtered by warehouse, currency and
-              unit of measure. Does not require or accept a customer.
-            - If the user needs a CUSTOMER-SPECIFIC price (or stock availability), use
-              jde_get_item_price instead -- that one needs an entityId, this one does not.
+        PURPOSE:
+        - Returns the base/list price of a product.
+        - The product must be identified by either:
+          - itemCatalog: the external/catalog product code, or
+          - itemId: the internal numeric JDE item identifier.
+        - Does not require or accept a customer.
+        - For customer-specific prices or stock availability, use jde_get_item_price instead.
 
-            WHEN TO USE:
-            - The user asks for an item's base/list price without mentioning a specific customer.
-            - If only the item name is known (no itemId/itemCatalog), call jde_search_items FIRST to
-              resolve it. If that search returns several matches, do NOT assume the first one -- ask
-              the user which one they mean.
-            - If the user's request actually needs a customer-specific price, and you already have
-              both an itemId and an entityId, use jde_get_item_price instead of this tool.
+        REQUIRED PRODUCT IDENTIFICATION:
+        - A product code is required before calling this tool.
+        - The preferred identifier is itemCatalog.
+        - itemId is the fallback identifier.
+        - Never assume that a numeric value is necessarily an itemId.
+        - itemCatalog may contain only numbers, only letters, or a combination of letters,
+          numbers and symbols.
 
-            INPUT:
-            - itemId: JDE item id, from jde_search_items, e.g. 60011.
-            - itemCatalog: JDE item catalog number/code (alternative identifier for the same item),
-              e.g. '210'.
-              At least ONE of itemId / itemCatalog is required; if both are known, send both.
-            - Prefer using itemId whenever possible for better performance.
-            - businessUnit: JDE business unit / warehouse code, e.g. '10'. Optional -- if omitted,
-              the response includes one price PER warehouse instead of a single one.
-            - currencyCode: currency to express the price in, e.g. 'USD'. Optional.
-            - unitOfMeasureCode: unit of measure code, e.g. 'EA'. Optional.
-            - Never invent businessUnit, currencyCode, itemId, itemCatalog or unitOfMeasureCode --
-              only use values the user provided or that another tool returned; leave optional ones
-              out if unknown.
+        HOW TO INTERPRET THE USER'S PRODUCT INPUT:
+        - If the user provides a product reference containing MORE THAN ONE WORD, treat it as a
+          product description, not as a product code.
+          Example: "Mountain Bike Red".
+          In that case, call jde_search_items FIRST to resolve the description into itemCatalog
+          and itemId.
+        - If jde_search_items returns exactly one product, use the returned itemCatalog to call
+          this tool. Also include itemId when it is available.
+        - If jde_search_items returns multiple products, do NOT select the first result
+          automatically. Show the matching products and ask the user which one they mean.
+        - If the user provides a SINGLE value, it may be an itemCatalog even when it is numeric.
+          Always try that value as itemCatalog FIRST.
+        - If querying by itemCatalog returns no matching product or no prices, retry using the same
+          value as itemId only when the value is a valid numeric itemId.
+        - Do not call jde_search_items merely because a single product reference contains letters.
+          A one-word alphanumeric value may be a valid itemCatalog.
+        - Never invent, transform or partially match a product code.
 
-            OUTPUT (structured JSON, see outputSchema):
-            - status "IN_PROGRESS": the query is still running against a busy JDE environment. This
-              is NOT an error -- call jde_get_item_list_price again with the exact same arguments
-              after pollAfterSeconds to get the actual results. Never report this to the user as a
-              failure.
-            - status "OK": prices[] has one entry per warehouse (just one if businessUnit was given),
-              each with businessUnit, itemId, itemCatalog, itemDescription, priceList, currencyCode,
-              unitOfMeasureCode, dateEffective, dateExpiration.
-            - status "FAILED" / "CANCELLED": message explains what happened; retrying is safe.
-            - status "INVALID_REQUEST": neither itemId nor itemCatalog was provided.
+        IDENTIFIER SEARCH ORDER:
+        1. Use itemCatalog first.
+        2. If itemCatalog produces no result, use itemId as fallback when a valid numeric itemId
+           is available.
+        3. When jde_search_items resolved the product and returned both identifiers, send both,
+           keeping itemCatalog as the primary business identifier.
+        4. Do not repeatedly retry the same identifier in a loop.
 
-            IMPORTANT FOR THE ASSISTANT:
-            - Present prices[] as a Markdown table (one row per warehouse when businessUnit wasn't
-              given), always stating the currency alongside any price shown.
-            """,
+        WHEN TO USE:
+        - The user asks for the base, standard, catalog or list price of a product.
+        - The request is not associated with a specific customer.
+        - A product code has been provided or has already been resolved using jde_search_items.
+
+        WHEN NOT TO USE:
+        - The user asks for a customer-specific price, negotiated price, discount or stock
+          availability. Use jde_get_item_price instead.
+        - The user provides only a multi-word product description and the product has not yet been
+          resolved. Call jde_search_items first.
+        - The user has not provided enough information to identify the product.
+
+        INPUT:
+        - itemCatalog:
+          JDE product catalog number/code.
+          This is the preferred identifier and may be numeric, alphabetic or alphanumeric.
+          Example values: "210", "BIKE-RED", "ABC123".
+
+        - itemId:
+          Internal numeric JDE item identifier.
+          Use it as a fallback when itemCatalog does not return results, or include it when another
+          tool has already returned it.
+          Example: 60011.
+
+        - At least ONE of itemCatalog or itemId is required.
+        - When both identifiers have been returned by jde_search_items, send both.
+        - For a user-provided single product code, try itemCatalog before itemId.
+
+        - businessUnit:
+          Optional JDE business unit or warehouse code.
+          Example: "10".
+          If provided, return prices for that warehouse.
+          If omitted, return prices for all warehouses/business units available for the product.
+
+        - unitOfMeasureCode:
+          Optional unit-of-measure code.
+          Example: "EA".
+          If provided, return prices for that unit of measure.
+          If omitted, return prices for all available units of measure.
+
+        - currencyCode:
+          Optional currency code.
+          Example: "USD".
+          If omitted, JDE uses the default currency returned by the pricing configuration.
+          Do not assume or invent a currency.
+
+        - Never invent itemCatalog, itemId, businessUnit, unitOfMeasureCode or currencyCode.
+        - Only use values explicitly provided by the user or returned by another tool.
+
+        OUTPUT (structured JSON, see outputSchema):
+        - status "IN_PROGRESS":
+          The request is still running against JDE.
+          This is not an error.
+          Call jde_get_item_list_price again using the exact same arguments after
+          pollAfterSeconds.
+          Do not report the operation as failed to the user.
+
+        - status "OK":
+          prices[] contains the available prices.
+          Depending on the filters provided, it may contain:
+          - one or more warehouses when businessUnit was omitted;
+          - one or more units of measure when unitOfMeasureCode was omitted;
+          - the default currency when currencyCode was omitted.
+
+          Each result may include:
+          - businessUnit
+          - itemId
+          - itemCatalog
+          - itemDescription
+          - priceList
+          - currencyCode
+          - unitOfMeasureCode
+          - dateEffective
+          - dateExpiration
+
+        - status "FAILED" or "CANCELLED":
+          The message explains what happened.
+          Retry only when appropriate and avoid infinite retries.
+
+        - status "INVALID_REQUEST":
+          Neither itemCatalog nor itemId was supplied.
+
+        IMPORTANT FOR THE ASSISTANT:
+        - Always tell the user which product code was used.
+        - Prefer displaying itemCatalog as the user-facing product code.
+        - Include itemId as the internal JDE identifier when available.
+        - Present prices[] as a Markdown table.
+        - Include one row for every combination returned by JDE, especially when businessUnit or
+          unitOfMeasureCode was omitted.
+        - Recommended columns:
+          Product Code | Item ID | Description | Warehouse | Unit | Price | Currency |
+          Effective Date | Expiration Date
+        - Always show the currency next to every price.
+        - If currencyCode was omitted, explain that the displayed currency is the default currency
+          returned by JDE.
+        - If businessUnit was omitted, explain that prices are shown for all available warehouses.
+        - If unitOfMeasureCode was omitted, explain that prices are shown for all available units
+          of measure.
+        - Never combine prices from different warehouses, currencies or units of measure into a
+          single value.
+        """
+            ,
             generateOutputSchema = true
     )
     public ItemListPriceResult getItemListPrice(
