@@ -21,6 +21,15 @@ RUN groupadd --system jdemcp && useradd --system --gid jdemcp --home /app --shel
 
 COPY --from=build /app/target/*.jar /app/app.jar
 
+# entrypoint.sh: si APP_VERSION esta seteada (stage/prod, ver docker-compose.yml),
+# descarga ese jar desde JFrog Artifactory ANTES de arrancar, reemplazando el jar
+# horneado arriba -- asi una nueva version de la app no requiere reconstruir esta
+# imagen, solo "mvn deploy" + cambiar APP_VERSION en el .env + reiniciar el
+# contenedor. Sin APP_VERSION (dev/local con --build), corre el jar horneado tal
+# cual, sin tocar la red.
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # ./data (H2 file DB, identity_mapping) y ./logs (logging.file.name) se montan
 # como volumenes en docker-compose para persistir entre reinicios -- hay que
 # crearlos y darles dueno ACA, antes del volumen: un named volume nuevo (recien
@@ -38,4 +47,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl -sf http://127.0.0.1:${MCP_SERVER_PORT:-8080}/.well-known/oauth-protected-resource || exit 1
 
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+ENTRYPOINT ["/app/entrypoint.sh"]

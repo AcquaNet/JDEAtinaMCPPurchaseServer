@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>com.atina</groupId>
 	<artifactId>JDEMCPServer</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>1.0.0</version>
 	<name>JDEmcpPur</name>
 	<description>Demo project for Spring Boot</description>
 	<url/>
@@ -86,5 +86,20 @@
 			</plugin>
 		</plugins>
 	</build>
+
+	<!-- "mvn deploy" publica el jar ejecutable (repackage de spring-boot-maven-plugin
+	     ya reemplaza el artefacto principal antes de esta fase) a JFrog Artifactory.
+	     El <id> tiene que matchear un <server> con credenciales en ~/.m2/settings.xml
+	     (ya configurado como "acquanet-central" para otros proyectos del mismo JFrog).
+	     Requiere una version real (no -SNAPSHOT): libs-release-local normalmente
+	     rechaza artefactos SNAPSHOT. Ver docker/entrypoint.sh y docker-compose.yml
+	     (APP_VERSION) para cómo se descarga esa version en runtime. -->
+	<distributionManagement>
+		<repository>
+			<id>acquanet-central</id>
+			<name>jfrog-releases</name>
+			<url>https://jfrog.atina-connection.com/artifactory/libs-release-local</url>
+		</repository>
+	</distributionManagement>
 
 </project>

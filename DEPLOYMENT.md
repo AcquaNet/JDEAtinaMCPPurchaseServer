@@ -586,6 +586,25 @@ docker compose --profile prod --env-file .env.prod logs caddy
 
 ### Redeploys (nueva versión del MCP Server)
 
+Hay dos caminos, según qué cambió:
+
+**Camino normal — solo cambió código de la app** (la gran mayoría de los deploys):
+el contenedor descarga el jar nuevo desde JFrog al arrancar (`docker/entrypoint.sh`),
+sin tocar la imagen Docker. Ver [docker/README.md, "Despliegue de la app vía
+JFrog"](docker/README.md#despliegue-de-la-app-vía-jfrog-sin-reconstruir-la-imagen)
+para el detalle de las variables `APP_VERSION`/`JFROG_*` en `.env.prod`.
+
+```bash
+mvn clean deploy                          # publica el jar en JFrog (pom.xml, distributionManagement)
+
+cd docker
+cp deploy.env.example deploy.env          # una vez: completar DO_HOST/DO_USERNAME/DO_SSH_KEY_PATH/REMOTE_DIR
+./scripts/redeploy-app-version.sh 1.2.3   # o "latest"
+```
+
+**Camino con imagen nueva — solo si cambió el `Dockerfile` en sí** (versión de JDK,
+paquetes del sistema, etc.):
+
 ```bash
 cd docker
 cp deploy.env.example deploy.env   # una vez: completar DO_HOST/DO_USERNAME/DO_SSH_KEY_PATH/REMOTE_DIR
@@ -595,7 +614,7 @@ cp deploy.env.example deploy.env   # una vez: completar DO_HOST/DO_USERNAME/DO_S
 ./scripts/deploy.sh
 ```
 
-Esto solo reinicia `mcp-server` — Keycloak/OpenBao/Caddy no se tocan.
+Ambos caminos solo tocan `mcp-server` — Keycloak/OpenBao/Caddy no se reinician.
 
 ---
 

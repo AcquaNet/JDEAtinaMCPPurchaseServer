@@ -16,11 +16,28 @@ producción).
 | `.env` | Variables de `dev`, committeado (placeholders, no secretos reales) |
 | `.env.stage.example` / `.env.prod.example` | Plantillas committeadas — copiar a `.env.stage` / `.env.prod` (gitignored) y completar |
 | `deploy.env.example` | Plantilla para `deploy.env` (gitignored) — datos SSH del droplet |
+| `entrypoint.sh` | Entrypoint del contenedor `mcp-server` — descarga el jar desde JFrog si `APP_VERSION` está seteada (ver "Despliegue de la app vía JFrog" abajo), o corre el jar horneado en la imagen si no |
 | `caddy/Caddyfile.prod` | Config de Caddy para producción (HTTPS automático, sin `tls` explícito) |
 | `keycloak/realm-export.json` | Realm `jde-integration` exportado (config + usuarios) — se importa automático al levantar un Keycloak nuevo |
 | `keycloak/export-realm.sh` | Re-exporta el realm después de cambios manuales en la consola admin |
-| `scripts/deploy.sh` | Redespliega `mcp-server` en el droplet por SSH (usa `deploy.env`) |
+| `scripts/deploy.sh` | Redespliega `mcp-server` en el droplet por SSH haciendo `pull` de una imagen nueva (usa `deploy.env`) — usar solo cuando cambió el `Dockerfile` en sí, no para actualizaciones normales de la app |
+| `scripts/redeploy-app-version.sh` | Actualiza `APP_VERSION` en el `.env` remoto y recrea `mcp-server` para que descargue esa versión desde JFrog — el camino normal para desplegar una nueva versión de la app (usa `deploy.env`) |
 | `scripts/package.sh` | Arma un ZIP portable (sin secretos, sin código fuente) para llevar el stack a otra PC |
+
+## Despliegue de la app vía JFrog (sin reconstruir la imagen)
+
+Desde que existe `entrypoint.sh`, la imagen Docker de `mcp-server` es un "runtime" (JRE + script de arranque) que rara vez hace falta reconstruir. Actualizar la app es:
+
+```bash
+# 1. En tu máquina: publicar el jar en JFrog (pom.xml -- distributionManagement)
+mvn clean deploy
+
+# 2. En el server: apuntar APP_VERSION a esa versión y recrear el contenedor
+cd docker
+./scripts/redeploy-app-version.sh 1.2.3          # o "latest"
+```
+
+`entrypoint.sh` descarga ese jar al arrancar y lo corre — sin `docker build`, sin `docker push`, sin `docker pull` de una imagen nueva. Ver `.env.stage.example`/`.env.prod.example` para las variables (`APP_VERSION`, `JFROG_URL`, `JFROG_REPO`, `JFROG_USERNAME`/`JFROG_PASSWORD`). Reconstruir/pushear la imagen (con `scripts/deploy.sh`) sigue siendo necesario solo cuando cambia el `Dockerfile` en sí (versión de JDK, dependencias del sistema, etc.).
 
 ## Ambientes (Docker Compose profiles)
 

@@ -147,6 +147,19 @@ services:
       # host. host.docker.internal + extra_hosts (abajo) resuelve al host
       # Docker si corre en la misma maquina que este compose.
       JDE_ATINA_GATEWAY_BASE_URL: ${JDE_ATINA_GATEWAY_BASE_URL:-http://host.docker.internal:8086}
+      # Descarga del jar desde JFrog Artifactory en vez del horneado en la imagen
+      # (ver docker/entrypoint.sh) -- APP_VERSION vacia (default) = comportamiento
+      # de siempre, corre el jar de la imagen. Setear en stage/prod para desplegar
+      # sin reconstruir/pushear/pullear una imagen nueva: "mvn deploy" (publica el
+      # jar en JFrog) + cambiar APP_VERSION acá + reiniciar el contenedor.
+      APP_VERSION: ${APP_VERSION:-}
+      JFROG_URL: ${JFROG_URL:-https://jfrog.atina-connection.com/artifactory}
+      JFROG_REPO: ${JFROG_REPO:-libs-release-local}
+      JFROG_GROUP_ID: ${JFROG_GROUP_ID:-com.atina}
+      JFROG_ARTIFACT_ID: ${JFROG_ARTIFACT_ID:-JDEMCPServer}
+      # Opcionales -- vacios si el repo de lectura en JFrog es anonimo.
+      JFROG_USERNAME: ${JFROG_USERNAME:-}
+      JFROG_PASSWORD: ${JFROG_PASSWORD:-}
     extra_hosts:
       # host.docker.internal ya funciona nativo en Docker Desktop (Mac/Windows);
       # en Linux hace falta este mapeo explicito.
