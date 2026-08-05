@@ -243,11 +243,22 @@ public class JdeAuthService {
         HttpServletRequest request = currentRequest();
         String sessionId = request.getHeader("Mcp-Session-Id");
         if (sessionId != null && !sessionId.isBlank()) {
+            log.info("resolveSessionId: Mcp-Session-Id='{}'", sessionId);
             return sessionId;
         }
-        // Fallback para el inspector o clientes que no envían el header
+        // Fallback para el inspector o clientes que no envían el header. A nivel INFO
+        // (no debug) a propósito -- diagnosticar "carrito no encontrado inmediatamente
+        // después de crearlo" requiere ver, sin tocar la config de logging en prod, si
+        // el sessionId efectivo cambia entre llamadas del mismo cliente y por qué (acá
+        // se loguea también X-Forwarded-For crudo: con
+        // server.forward-headers-strategy=framework, getRemoteAddr() ya refleja ese
+        // header reescrito por Tomcat, no la conexión TCP directa -- si ese header
+        // varía entre requests de la "misma" sesión lógica del cliente MCP, el
+        // fallback por IP no es estable y el carrito en memoria, keyed por sessionId,
+        // parece "perderse" sin haber expirado ni haberse reiniciado el server).
         String fallback = request.getRemoteAddr();
-        log.debug("Mcp-Session-Id no presente, usando IP como fallback: {}", fallback);
+        log.info("resolveSessionId: Mcp-Session-Id ausente, fallback a IP='{}' (X-Forwarded-For='{}')",
+                fallback, request.getHeader("X-Forwarded-For"));
         return fallback;
     }
 
