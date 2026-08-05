@@ -99,7 +99,7 @@ public class SalesCartService {
     public SalesCart createCart(Integer entityId, String businessUnit, String currencyCode) {
         CartOwner owner = ownerResolver.resolveCurrent();
 
-        Optional<SalesCart> existing = repository.findBySessionId(owner.sessionId());
+        Optional<SalesCart> existing = findActiveCartOptional(owner);
         if (existing.isPresent() && isBlockingExistingCart(existing.get())) {
             throw new CartOperationException(CartErrorCodes.CART_ALREADY_EXISTS,
                     "A shopping cart is already active for this session (status " + existing.get().status()
@@ -128,10 +128,7 @@ public class SalesCartService {
 
     public SalesCart getCart() {
         CartOwner owner = ownerResolver.resolveCurrent();
-        SalesCart cart = repository.findBySessionId(owner.sessionId())
-                .orElseThrow(() -> new CartOperationException(CartErrorCodes.CART_NOT_FOUND,
-                        "No active shopping cart found for this session. Call jde_create_current_sales_cart "
-                                + "to start one."));
+        SalesCart cart = findActiveCart(owner);
         checkOwnership(cart, owner);
         return cart;
     }
@@ -144,7 +141,7 @@ public class SalesCartService {
                               Double quantity, String unitOfMeasure, String businessUnit, String currencyCode,
                               String returnAvailability) {
         CartOwner owner = ownerResolver.resolveCurrent();
-        Optional<SalesCart> existing = repository.findBySessionId(owner.sessionId());
+        Optional<SalesCart> existing = findActiveCartOptional(owner);
 
         SalesCart baseCart;
         if (existing.isEmpty()) {
@@ -218,9 +215,7 @@ public class SalesCartService {
 
     public SalesCart updateLine(String lineId, Double quantity, String unitOfMeasure) {
         CartOwner owner = ownerResolver.resolveCurrent();
-        SalesCart baseCart = repository.findBySessionId(owner.sessionId())
-                .orElseThrow(() -> new CartOperationException(CartErrorCodes.CART_NOT_FOUND,
-                        "No active shopping cart found for this session."));
+        SalesCart baseCart = findActiveCart(owner);
         checkOwnership(baseCart, owner);
         checkEditable(baseCart);
 
@@ -263,9 +258,7 @@ public class SalesCartService {
 
     public SalesCart removeLine(String lineId) {
         CartOwner owner = ownerResolver.resolveCurrent();
-        SalesCart baseCart = repository.findBySessionId(owner.sessionId())
-                .orElseThrow(() -> new CartOperationException(CartErrorCodes.CART_NOT_FOUND,
-                        "No active shopping cart found for this session."));
+        SalesCart baseCart = findActiveCart(owner);
         checkOwnership(baseCart, owner);
         checkEditable(baseCart);
 
@@ -289,9 +282,7 @@ public class SalesCartService {
     /** @return el carrito tal como quedó (preservado si ORDER_CREATED) o null si se eliminó. */
     public SalesCart clearCart() {
         CartOwner owner = ownerResolver.resolveCurrent();
-        SalesCart cart = repository.findBySessionId(owner.sessionId())
-                .orElseThrow(() -> new CartOperationException(CartErrorCodes.CART_NOT_FOUND,
-                        "No active shopping cart found for this session -- nothing to clear."));
+        SalesCart cart = findActiveCart(owner);
         checkOwnership(cart, owner);
 
         if (cart.status() == CartStatus.ORDER_CREATED) {
@@ -316,9 +307,7 @@ public class SalesCartService {
      */
     public CartValidationOutcome validateCart() {
         CartOwner owner = ownerResolver.resolveCurrent();
-        SalesCart baseCart = repository.findBySessionId(owner.sessionId())
-                .orElseThrow(() -> new CartOperationException(CartErrorCodes.CART_NOT_FOUND,
-                        "No active shopping cart found for this session."));
+        SalesCart baseCart = findActiveCart(owner);
         checkOwnership(baseCart, owner);
         checkEditable(baseCart);
 
@@ -390,9 +379,7 @@ public class SalesCartService {
      */
     public SubmissionPreparation prepareSubmission(long expectedCartVersion) {
         CartOwner owner = ownerResolver.resolveCurrent();
-        SalesCart cart = repository.findBySessionId(owner.sessionId())
-                .orElseThrow(() -> new CartOperationException(CartErrorCodes.CART_NOT_FOUND,
-                        "No active shopping cart found for this session."));
+        SalesCart cart = findActiveCart(owner);
         checkOwnership(cart, owner);
 
         if (cart.status() == CartStatus.ORDER_CREATED) {
@@ -474,8 +461,20 @@ public class SalesCartService {
         return new CreatedOrderRef(safe.company(), safe.orderNumber(), safe.orderType(), safe.externalReference(), true);
     }
 
+    /**
+     * "MCP-{cartId}-{version}", usado como attachmentText/reference en el
+     * payload de processSalesOrderV5 -- ese campo no puede superar 30
+     * caracteres (limite del backend JDE, mismo criterio que el truncado de
+     * remark a 30 caracteres en JdePurchaseApprovalTool). cartId ya es corto
+     * (12 hex, ver SalesCart.newCartId) para que esto no dispare en el caso
+     * normal; el truncado de acá es solo defensivo.
+     */
     private static String buildExternalReference(SalesCart cart) {
-        return "MCP-" + cart.cartId() + "-" + cart.version();
+        String reference = "MCP-" + cart.cartId() + "-" + cart.version();
+        if (reference.length() > 30) {
+            reference = reference.substring(0, 30);
+        }
+        return reference;
     }
 
     private String checkCredit(SalesCart cart) {
@@ -550,6 +549,32 @@ public class SalesCartService {
     // =====================================================================
     // Helpers compartidos
     // =====================================================================
+
+    /**
+     * Busca el carrito activo del caller actual, con fallback por ownerId
+     * cuando el Mcp-Session-Id cambió respecto de la llamada anterior (el
+     * conector remoto de Claude.ai puede reinicializar la sesión MCP entre
+     * tool calls -- confirmado contra logs reales: mismo owner autenticado,
+     * Mcp-Session-Id distinto entre un jde_add_item_to_current_sales_cart y
+     * el jde_validate_current_sales_cart inmediatamente posterior). Si lo
+     * encuentra por ownerId, lo re-homea a la sesión actual (ver
+     * SalesCartRepository.rehome) para que las próximas llamadas de esta
+     * misma sesión ya lo encuentren por el camino rápido.
+     */
+    private Optional<SalesCart> findActiveCartOptional(CartOwner owner) {
+        Optional<SalesCart> bySession = repository.findBySessionId(owner.sessionId());
+        if (bySession.isPresent()) {
+            return bySession;
+        }
+        return repository.findByOwnerId(owner.ownerId())
+                .map(cart -> repository.rehome(cart, owner.sessionId()));
+    }
+
+    private SalesCart findActiveCart(CartOwner owner) {
+        return findActiveCartOptional(owner).orElseThrow(() -> new CartOperationException(
+                CartErrorCodes.CART_NOT_FOUND,
+                "No active shopping cart found for this session. Call jde_create_current_sales_cart to start one."));
+    }
 
     void checkOwnership(SalesCart cart, CartOwner owner) {
         if (!cart.ownerId().equals(owner.ownerId())) {

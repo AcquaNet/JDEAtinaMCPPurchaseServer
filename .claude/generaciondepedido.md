@@ -402,6 +402,8 @@ MCP-<cartId>-L2
 
 Antes de usarlo para evitar duplicados, hay que verificar si JDE permite consultar pedidos por este campo.
 
+Restricción confirmada: este campo (y attachmentText, que en la implementación actual llevan el mismo valor de referencia externa) no puede superar 30 caracteres -- límite del backend JDE, mismo criterio ya usado para el remark de aprobar/rechazar purchase orders (JdePurchaseApprovalTool, también truncado a 30). Por eso SalesCartService.buildExternalReference usa un cartId corto (12 hex, no un UUID completo de 36 caracteres) para "MCP-{cartId}-{version}", con un truncado defensivo adicional a 30 caracteres por las dudas.
+
 ⸻
 
 Identificación del producto

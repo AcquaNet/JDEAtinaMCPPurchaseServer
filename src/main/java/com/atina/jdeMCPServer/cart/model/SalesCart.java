@@ -54,7 +54,7 @@ public record SalesCart(
                                      String businessUnit, String currencyCode) {
         Instant now = Instant.now();
         return new SalesCart(
-                UUID.randomUUID().toString(),
+                newCartId(),
                 sessionId,
                 ownerId,
                 "",
@@ -73,6 +73,18 @@ public record SalesCart(
                 now,
                 null
         );
+    }
+
+    /**
+     * cartId corto (12 hex, sin guiones -- 48 bits de un UUID random, colisión
+     * despreciable para el volumen de carritos en memoria de esta etapa) en
+     * vez de un UUID completo (36 caracteres): SalesCartService arma la
+     * referencia externa hacia JDE como "MCP-{cartId}-{version}", y ese campo
+     * (reference/attachmentText de processSalesOrderV5) no puede superar 30
+     * caracteres -- un UUID completo ya solo (36) excede ese límite.
+     */
+    private static String newCartId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 12);
     }
 
     public boolean isExpired() {
@@ -156,6 +168,18 @@ public record SalesCart(
         return new SalesCart(cartId, sessionId, ownerId, tenantId, customerId, customerName, shipToId,
                 businessUnit, company, orderType, currencyCode, lines, status, version,
                 createdAt, Instant.now(), expiresAt, ref);
+    }
+
+    /**
+     * Usado por SalesCartRepository.rehome cuando el sessionId de un caller
+     * autenticado cambia entre llamadas (el Mcp-Session-Id no es 100%
+     * estable contra reconexiones del cliente MCP -- ver
+     * SalesCartService.findActiveCart) pero el ownerId sigue siendo el mismo.
+     */
+    public SalesCart withSessionId(String newSessionId) {
+        return new SalesCart(cartId, newSessionId, ownerId, tenantId, customerId, customerName, shipToId,
+                businessUnit, company, orderType, currencyCode, lines, status, version,
+                createdAt, updatedAt, expiresAt, createdOrder);
     }
 
     /** Usado por SalesCartRepository para implementar el TTL deslizante (se renueva en cada save/update). */

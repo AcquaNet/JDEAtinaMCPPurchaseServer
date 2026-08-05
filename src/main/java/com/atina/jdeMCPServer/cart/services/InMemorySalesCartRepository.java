@@ -61,6 +61,13 @@ public class InMemorySalesCartRepository implements SalesCartRepository {
     }
 
     @Override
+    public Optional<SalesCart> findByOwnerId(String ownerId) {
+        return carts.values().stream()
+                .filter(cart -> cart.ownerId().equals(ownerId) && !cart.isExpired())
+                .findFirst();
+    }
+
+    @Override
     public SalesCart save(SalesCart cart) {
         if (!carts.containsKey(cart.sessionId()) && carts.size() >= maxActiveCarts) {
             throw new CartOperationException(CartErrorCodes.CART_LIMIT_EXCEEDED,
@@ -70,6 +77,17 @@ public class InMemorySalesCartRepository implements SalesCartRepository {
         SalesCart withExpiry = cart.withExpiresAt(Instant.now().plus(ttl));
         carts.put(withExpiry.sessionId(), withExpiry);
         return withExpiry;
+    }
+
+    @Override
+    public SalesCart rehome(SalesCart cart, String newSessionId) {
+        if (cart.sessionId().equals(newSessionId)) {
+            return cart;
+        }
+        carts.remove(cart.sessionId());
+        log.info("Carrito {} re-homed de sessionId '{}' a '{}' (mismo ownerId, Mcp-Session-Id distinto entre "
+                + "llamadas -- ver JdeAuthService.resolveSessionId)", cart.cartId(), cart.sessionId(), newSessionId);
+        return save(cart.withSessionId(newSessionId));
     }
 
     @Override
