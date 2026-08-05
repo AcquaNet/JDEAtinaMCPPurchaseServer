@@ -3,6 +3,8 @@ package com.atina.jdeMCPServer.salesorder.services;
 import com.atina.jdeMCPServer.auth.JdeAuthService;
 import com.atina.jdeMCPServer.gateway.RequestCoalescer;
 import com.atina.jdeMCPServer.mcp.CorrelationIdContext;
+import com.atina.jdeMCPServer.salesorder.model.CreateSalesOrderRequest;
+import com.atina.jdeMCPServer.salesorder.model.CreateSalesOrderResponse;
 import com.atina.jdeMCPServer.salesorder.model.CustomerAddress;
 import com.atina.jdeMCPServer.salesorder.model.CustomerCreditInfo;
 import com.atina.jdeMCPServer.salesorder.model.CustomerCreditSummary;
@@ -11,6 +13,7 @@ import com.atina.jdeMCPServer.salesorder.model.CustomerSummary;
 import com.atina.jdeMCPServer.salesorder.model.ItemListPriceEntry;
 import com.atina.jdeMCPServer.salesorder.model.ItemSummary;
 import com.atina.jdeMCPServer.salesorder.model.PriceQuote;
+import com.atina.jdeMCPServer.salesorder.model.SalesOrderLineRequest;
 import com.atina.jdeMCPServer.salesorder.model.WarehouseAvailability;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -52,6 +55,8 @@ public class JdeSalesOrderClient {
             "oracle.e1.bssv.JP010020.CustomerManager.getCustomerCreditInformationV2";
     private static final String OP_GET_ITEM_LIST_PRICE =
             "oracle.e1.bssv.JP420000.SalesOrderManager.getItemListPrice";
+    private static final String OP_PROCESS_SALES_ORDER =
+            "oracle.e1.bssv.JP420000.SalesOrderManager.processSalesOrderV5";
 
     // businessUnit va con padding de espacios a la izquierda hasta 12 caracteres --
     // mismo requisito que confirmado en JdePurchaseOrderClient para otras operaciones
@@ -453,6 +458,110 @@ public class JdeSalesOrderClient {
         String raw = executeGatewayOperationWithToken(OP_GET_ITEM_LIST_PRICE,
                 itemListPriceValue(itemId, itemCatalog, businessUnit, currencyCode, unitOfMeasureCode), token);
         return parseItemListPrice(raw);
+    }
+
+    /**
+     * Crea un pedido de venta completo (cabecera + líneas) en una única
+     * llamada (operación BSSV processSalesOrderV5). A diferencia de las demás
+     * operaciones de este cliente, el "value" raíz tiene una única clave
+     * "header" que anida todo lo demás -- confirmado en
+     * .claude/generaciondepedido.md junto con un ejemplo real de request y
+     * respuesta contra el ambiente de dev.
+     */
+    public CreateSalesOrderResponse createSalesOrder(CreateSalesOrderRequest request) {
+        log.info("Gateway create sales order for invoicedTo {} / businessUnit '{}' / {} lines",
+                request.invoicedToEntityId(), request.businessUnit(), request.lines().size());
+        String raw = executeGatewayOperation(OP_PROCESS_SALES_ORDER, createSalesOrderValue(request));
+        return parseCreateSalesOrderResponse(raw);
+    }
+
+    /**
+     * Igual que {@link #createSalesOrder} pero con un token ya resuelto (no lo
+     * resuelve internamente vía authService, que depende de
+     * RequestContextHolder -- ver {@link #executeGatewayOperationWithToken}).
+     */
+    public CreateSalesOrderResponse createSalesOrderWithToken(CreateSalesOrderRequest request, String token) {
+        String raw = executeGatewayOperationWithToken(OP_PROCESS_SALES_ORDER, createSalesOrderValue(request), token);
+        return parseCreateSalesOrderResponse(raw);
+    }
+
+    private static Map<String, Object> createSalesOrderValue(CreateSalesOrderRequest request) {
+        Map<String, Object> invoicedTo = new LinkedHashMap<>();
+        invoicedTo.put("entityId", request.invoicedToEntityId());
+        Map<String, Object> deliverTo = new LinkedHashMap<>();
+        deliverTo.put("entityId", request.deliverToEntityId());
+        Map<String, Object> shipToCustomer = new LinkedHashMap<>();
+        shipToCustomer.put("entityId", request.shipToEntityId());
+        Map<String, Object> shipTo = new LinkedHashMap<>();
+        shipTo.put("customer", shipToCustomer);
+
+        Map<String, Object> salesOrderKey = new LinkedHashMap<>();
+        salesOrderKey.put("documentTypeCode", request.documentTypeCode());
+        salesOrderKey.put("documentCompany", request.documentCompany());
+
+        Map<String, Object> headerProcessing = new LinkedHashMap<>();
+        headerProcessing.put("actionType", request.actionType());
+        headerProcessing.put("processingVersion", request.processingVersion());
+
+        List<Map<String, Object>> detail = new ArrayList<>();
+        for (SalesOrderLineRequest line : request.lines()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("itemProduct", line.itemProduct());
+            Map<String, Object> product = new LinkedHashMap<>();
+            product.put("item", item);
+            Map<String, Object> lineProcessing = new LinkedHashMap<>();
+            lineProcessing.put("actionType", request.actionType());
+
+            Map<String, Object> detailLine = new LinkedHashMap<>();
+            detailLine.put("businessUnit", padBusinessUnit(line.businessUnit()));
+            detailLine.put("quantityOrdered", line.quantityOrdered());
+            detailLine.put("lineTypeCode", line.lineTypeCode());
+            detailLine.put("reference", line.reference());
+            detailLine.put("product", product);
+            detailLine.put("processing", lineProcessing);
+            detail.add(detailLine);
+        }
+
+        Map<String, Object> header = new LinkedHashMap<>();
+        header.put("businessUnit", padBusinessUnit(request.businessUnit()));
+        header.put("invoicedTo", invoicedTo);
+        header.put("attachmentText", request.attachmentText());
+        header.put("dateRequested", request.dateRequested().toString());
+        header.put("deliverTo", deliverTo);
+        header.put("shipTo", shipTo);
+        header.put("salesOrderKey", salesOrderKey);
+        header.put("dateOrdered", request.dateOrdered().toString());
+        header.put("company", request.company());
+        header.put("currencyCodeTo", request.currencyCodeTo());
+        header.put("processing", headerProcessing);
+        header.put("detail", detail);
+
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("header", header);
+        return value;
+    }
+
+    /**
+     * Parseo confirmado contra una respuesta real (ver
+     * .claude/generaciondepedido.md): a diferencia del request, listaDeValores
+     * en la respuesta es un objeto directo (no un array) con "header" adentro.
+     * El número de pedido real es header.salesOrderKey.documentNumber (no
+     * documentOrderInvoiceNumber -- ese es un campo de purchase orders, un
+     * módulo distinto). La moneda de respuesta vive en
+     * header.financial.currencyCode, no en currencyCodeTo (solo de request).
+     */
+    private CreateSalesOrderResponse parseCreateSalesOrderResponse(String rawJson) {
+        JsonNode listaDeValores = parseListaDeValores(rawJson, OP_PROCESS_SALES_ORDER);
+        JsonNode header = listaDeValores.path("header");
+        JsonNode salesOrderKey = header.path("salesOrderKey");
+
+        return new CreateSalesOrderResponse(
+                salesOrderKey.path("documentCompany").asText("").trim(),
+                salesOrderKey.path("documentNumber").asText(""),
+                salesOrderKey.path("documentTypeCode").asText("").trim(),
+                header.path("financial").path("currencyCode").asText("").trim(),
+                header.path("amountTotalOrderDomestic").decimalValue(),
+                header.path("attachmentText").asText(""));
     }
 
     /**

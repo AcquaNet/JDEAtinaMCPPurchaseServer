@@ -564,6 +564,84 @@ La cabecera y las líneas utilizan actionType = "A", indicando que deben agregar
 
 Desde el MCP, esta operación debería ejecutarse únicamente al confirmar el carrito. El modelo no debería construir directamente esta estructura: un servicio Java interno debe transformar el carrito validado en el payload de processSalesOrderV5, ejecutar la operación y devolver el número de pedido creado.
 
+⸻
+
+Respuesta real confirmada (ejecución de prueba contra el ambiente de dev)
+
+A diferencia del request, `listaDeValores` en la respuesta es un objeto directo (no un array) con una única clave `header` adentro -- mismo criterio ya usado por parseListaDeValores en JdeSalesOrderClient.
+
+```json
+{
+    "jwtToken": "...",
+    "listaDeValores": {
+        "e1MessageList": { "E1Messages": null, "messagesAsString": "" },
+        "header": {
+            "actionType": "A",
+            "amountTotalOrderDomestic": 2308.2,
+            "amountTotalOrderForeign": 0,
+            "attachmentText": "Order Number",
+            "businessUnit": "          30",
+            "dates": { "orderDate": "2026-08-03T00:00:00Z" },
+            "detail": [
+                {
+                    "documentLineNumber": 0,
+                    "financial": {
+                        "priceExtendedDomestic": 718.2,
+                        "priceUnitDomestic": 718.2,
+                        "unitOfMeasureCodePricing": "EA"
+                    },
+                    "product": {
+                        "item": {
+                            "itemCatalog": "210                      ",
+                            "itemId": 60011,
+                            "itemProduct": "210"
+                        },
+                        "lineTypeCode": "S",
+                        "statusCodeLast": "520",
+                        "statusCodeNext": "540"
+                    },
+                    "quantity": {
+                        "quantityOrdered": 1,
+                        "quantityShippable": 1,
+                        "unitOfMeasureCodeTransaction": "EA"
+                    },
+                    "shipTo": { "entityId": 4242 }
+                }
+            ],
+            "financial": { "currencyCode": "USD", "paymentTerms": "   " },
+            "holdOrderCode": "  ",
+            "salesOrderKey": {
+                "documentCompany": "00001",
+                "documentNumber": 3278,
+                "documentTypeCode": "SO"
+            },
+            "shipTo": {
+                "addressLine1": "400 Broadland Road NW                   ",
+                "city": "Atlanta                  ",
+                "countryCode": "US ",
+                "customer": { "entityId": 4242, "entityTaxId": "20924558904         " },
+                "mailingName": "Capital System Inc                      ",
+                "postalCode": "30342       ",
+                "stateCode": "GA "
+            }
+        }
+    },
+    "sessionId": "-1794289409"
+}
+```
+
+Puntos confirmados que reemplazan los supuestos anteriores:
+
+* El número de pedido real es `header.salesOrderKey.documentNumber` (entero, ej. `3278`) -- NO `documentOrderInvoiceNumber` (ese nombre era una analogía incorrecta con la clave compuesta de purchase orders, que es un módulo distinto).
+* `header.salesOrderKey.documentTypeCode` / `documentCompany` confirman el tipo de documento y la compañía documental, ecos exactos de lo enviado.
+* La moneda de la respuesta vive en `header.financial.currencyCode`, NO en `header.currencyCodeTo` (ese campo es solo de request).
+* `header.attachmentText` se devuelve exactamente como se envió -- confirma que el campo se persiste y se puede leer de vuelta en la misma respuesta de creación. Esto NO confirma todavía que sea buscable después vía una operación de consulta separada (sigue siendo un supuesto abierto para la idempotencia real cross-reinicio, ver carrito.md).
+* `header.amountTotalOrderDomestic` da el total del pedido, útil para mostrar en la confirmación al usuario.
+* `header.detail[].product.item` trae `itemId`, `itemCatalog` (con padding a la derecha) e `itemProduct` ecos de la línea enviada, más `financial.priceUnitDomestic`/`priceExtendedDomestic` con el precio real aplicado por JDE.
+* No hay ningún campo `company` (el "0001" corto) en el header de respuesta -- solo `documentCompany` ("00001"). El "company" corto sigue siendo responsabilidad de quien arma el payload (valor de configuración, no algo que JDE devuelva para confirmar).
+
+Sobre el tiempo de respuesta: si `processSalesOrderV5` resulta lento en uso real, usar el mismo mecanismo async con kill-switch (`jde.<tool>.async.enabled` + `LongRunningTaskRegistry`) ya implementado para las demás tools de sales order, en vez de dejarlo forzosamente síncrono.
+
 
 
 
