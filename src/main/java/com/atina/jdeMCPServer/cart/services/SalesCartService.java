@@ -55,6 +55,7 @@ public class SalesCartService {
     private final String salesOrderLineTypeCode;
     private final String salesOrderActionType;
     private final String salesOrderProcessingVersion;
+    private final int requestedDateLeadDays;
 
     public SalesCartService(
             SalesCartRepository repository,
@@ -71,7 +72,8 @@ public class SalesCartService {
             @Value("${jde.sales-order.document-company:00001}") String salesOrderDocumentCompany,
             @Value("${jde.sales-order.line-type-code:S}") String salesOrderLineTypeCode,
             @Value("${jde.sales-order.action-type:A}") String salesOrderActionType,
-            @Value("${jde.sales-order.processing-version:ZJDE0001}") String salesOrderProcessingVersion) {
+            @Value("${jde.sales-order.processing-version:ZJDE0001}") String salesOrderProcessingVersion,
+            @Value("${jde.sales-order.default-requested-date-lead-days:30}") int requestedDateLeadDays) {
         this.repository = repository;
         this.soClient = soClient;
         this.ownerResolver = ownerResolver;
@@ -87,6 +89,7 @@ public class SalesCartService {
         this.salesOrderLineTypeCode = salesOrderLineTypeCode;
         this.salesOrderActionType = salesOrderActionType;
         this.salesOrderProcessingVersion = salesOrderProcessingVersion;
+        this.requestedDateLeadDays = requestedDateLeadDays;
     }
 
     // =====================================================================
@@ -503,10 +506,21 @@ public class SalesCartService {
         return total;
     }
 
+    /**
+     * dateOrdered es la fecha comercial del pedido (hoy). dateRequested es la
+     * fecha en la que el cliente solicita recibir/disponer de los productos
+     * -- NO es "hoy": si coincide con dateOrdered, JDE no tiene margen para
+     * calcular la fecha de pick/promised-ship contra el lead time del
+     * business unit/artículo y devuelve un warning (confirmado contra un
+     * envío real -- ver .claude/generaciondepedido.md). Por eso se calcula
+     * como hoy + jde.sales-order.default-requested-date-lead-days, nunca
+     * igual a dateOrdered.
+     */
     private CreateSalesOrderRequest buildRequest(SalesCart cart, String externalReference) {
         String headerBusinessUnit = (cart.businessUnit() != null && !cart.businessUnit().isBlank())
                 ? cart.businessUnit() : cart.lines().get(0).businessUnit();
-        LocalDate today = LocalDate.now();
+        LocalDate dateOrdered = LocalDate.now();
+        LocalDate dateRequested = dateOrdered.plusDays(requestedDateLeadDays);
 
         List<SalesOrderLineRequest> lines = new ArrayList<>(cart.lines().size());
         for (SalesCartLine line : cart.lines()) {
@@ -515,8 +529,9 @@ public class SalesCartService {
         }
 
         return new CreateSalesOrderRequest(headerBusinessUnit, cart.customerId(), cart.customerId(), cart.customerId(),
-                externalReference, today, today, salesOrderCompany, salesOrderDocumentCompany, cart.currencyCode(),
-                salesOrderDocumentTypeCode, salesOrderProcessingVersion, salesOrderActionType, lines);
+                externalReference, dateRequested, dateOrdered, salesOrderCompany, salesOrderDocumentCompany,
+                cart.currencyCode(), salesOrderDocumentTypeCode, salesOrderProcessingVersion, salesOrderActionType,
+                lines);
     }
 
     /**

@@ -642,6 +642,16 @@ Puntos confirmados que reemplazan los supuestos anteriores:
 
 Sobre el tiempo de respuesta: si `processSalesOrderV5` resulta lento en uso real, usar el mismo mecanismo async con kill-switch (`jde.<tool>.async.enabled` + `LongRunningTaskRegistry`) ya implementado para las demás tools de sales order, en vez de dejarlo forzosamente síncrono.
 
+⸻
+
+Warning de fecha de pick -- dateRequested no puede ser igual a dateOrdered
+
+Confirmado contra un envío real desde el MCP Server: cuando `dateRequested` se envía igual a `dateOrdered` (ambos "hoy"), JDE devuelve un warning relacionado a la fecha de pick. Un request armado a mano en Postman con `dateRequested` casi un mes posterior a `dateOrdered` no tuvo ese warning.
+
+Explicación: `dateRequested` es la fecha en la que el cliente pide recibir/disponer de los productos (ver más arriba, "Fecha solicitada") -- JDE la usa para calcular la fecha de pick/promised-ship contra el lead time configurado del business unit/artículo. Si se pide "para hoy mismo", no hay margen para programar el pick.
+
+Corrección aplicada en `SalesCartService.buildRequest`: `dateOrdered` sigue siendo hoy, pero `dateRequested` se calcula como `hoy + jde.sales-order.default-requested-date-lead-days` (default 30, igual al margen usado en el request de Postman que confirmó no tener warnings). Ajustar esa property si el lead time real configurado en JDE para el ambiente es distinto.
+
 
 
 
